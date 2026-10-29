@@ -1,0 +1,13 @@
+LANGU;ADSONM;OBJVERS;TXTLG
+R;ZSD_A01;A;Продажи: позиции документов
+E;ZSD_A01;A;Sales: document items
+R;ZSD_A02;A;Продажи по клиентам и месяцам
+E;ZSD_A02;A;Sales by customer and month
+R;ZSD_S01;A;Продажи: промежуточный слой
+E;ZSD_S01;A;Sales: staging
+R;ZSD_D01;A;План продаж
+E;ZSD_D01;A;Sales plan
+R;ZSD_A03;A;Продажи по материалам (с рутиной)
+E;ZSD_A03;A;Sales by material (with routine)
+R;ZSD_A04;A;Продажи по группам материалов
+E;ZSD_A04;A;Sales by material group

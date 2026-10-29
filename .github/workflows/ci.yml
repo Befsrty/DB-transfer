@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Установка зависимостей
+        run: uv sync --locked
+      - name: Линтер
+        run: uv run ruff check .
+      - name: Модульные тесты
+        run: uv run pytest --cov=dbtransfer --cov-report=term-missing

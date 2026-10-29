@@ -1,0 +1,11 @@
+# Демо-проект DB-transfer (ТЗ, ФП-1.1). Пути относительно этого файла.
+name: Продажи (демо)
+bw_version: BW/4HANA
+# Схемы в базе: dbt_stg, dbt_md, dbt_dwh, dbt_mart, dbt_meta
+schema_prefix: dbt
+bw_export: bw_export
+data: data
+# Профиль подключения: переменные DBT_DB_* из .env
+db_profile: DBT_DB
+# Состав переноса по умолчанию: поток от этого объекта вниз до источников
+scope_from: ZSD_A02
