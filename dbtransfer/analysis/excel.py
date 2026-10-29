@@ -67,7 +67,8 @@ def write_import_check(model: Model, path: Path) -> Path:
     return path
 
 
-def write_complexity(model: Model, report: Report, path: Path) -> Path:
+def write_complexity(model: Model, report: Report, path: Path, sql_lines: int | None = None,
+                     db_objects: int | None = None) -> Path:
     wb = Workbook()
     ws = wb.active
     ws.title = "Итог"
@@ -94,7 +95,9 @@ def write_complexity(model: Model, report: Report, path: Path) -> Path:
         ["Объектов уровня 1 (переводятся автоматически)", f"{report.by_level[1]} из {report.total}",
          f"{report.level1_share:.0%}"],
         ["Ручная работа по нормам effort_norms.yaml, часов", f"{report.hours:g}", ""],
-        ["Сгенерировано строк SQL и объектов БД", "появится в шаге 3 (генерация SQL)", ""],
+        ["Сгенерировано строк SQL", sql_lines if sql_lines is not None else "нет данных", ""],
+        ["Сгенерировано объектов БД (схемы, таблицы, функции)", db_objects if db_objects is not None else "нет данных",
+         ""],
     ]
     row = _table(ws, ["Показатель", "Значение", "Доля"], metrics, start_row=row)
 

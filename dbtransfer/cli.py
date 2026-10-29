@@ -13,11 +13,15 @@ from dbtransfer.analysis.excel import write_complexity, write_import_check
 from dbtransfer.analysis.graph import ScopeError, scope_from
 from dbtransfer.analysis.lineage import DOWN, UP, LineageError, lineage, render
 from dbtransfer.config import load_bw_tables, load_db_settings
-from dbtransfer.db import DbError, check_connection
-from dbtransfer.generator import DIALECTS, RulesError, TypeRules, generate
+from dbtransfer.db import DbError, check_connection, connect, server_dialect
+from dbtransfer.deploy import ACTION_TEXT, DeployError, deploy
+from dbtransfer.generator import DIALECTS, Package, RulesError, TypeRules, generate
 from dbtransfer.importers.bw_csv import ImportFailed, import_bw_export
-from dbtransfer.model import Severity
+from dbtransfer.model import Model, Severity
 from dbtransfer.project import Project, ProjectError, find_project, init_project
+from dbtransfer.reconcile import STATUSES, ReconcileError, reconcile
+from dbtransfer.runtime import LoadError, RunError, load_file, rollback_load, run_load
+from dbtransfer.scenario import ScenarioError, run_demo
 
 # Коды возврата по ТЗ: 0 успех, 1 ошибка данных, 2 ошибка подключения или окружения
 EXIT_DATA_ERROR = 1
@@ -153,7 +157,12 @@ def report_cmd(project: ProjectOption = None) -> None:
     except ProjectError as e:
         raise _fail(str(e)) from None
     report = assess(model)
-    path = write_complexity(model, report, proj.out_dir / "complexity.xlsx")
+    try:
+        package = generate(model, TypeRules.load(proj.root))
+        sql_lines, db_objects = package.sql_lines, package.db_objects
+    except RulesError:
+        sql_lines = db_objects = None
+    path = write_complexity(model, report, proj.out_dir / "complexity.xlsx", sql_lines, db_objects)
     typer.echo(f"Объектов: {report.total}; уровень 1: {report.by_level[1]} ({report.level1_share:.0%}), "
                f"уровень 2: {report.by_level[2]}, уровень 3: {report.by_level[3]}")
     typer.echo(f"Ручная работа по нормам: {report.hours:g} ч")
@@ -241,6 +250,169 @@ def generate_cmd(
     for w in package.warnings:
         typer.secho(f"  {w}", fg=typer.colors.YELLOW)
     typer.echo(f"Пакет SQL: {out} (всё одним файлом: deploy_all.sql)")
+
+
+EnvOption = Annotated[Path, typer.Option("--env-file", help="Файл с параметрами подключения.")]
+
+
+def _connect(env_file: Path):
+    try:
+        return connect(load_db_settings(env_file))
+    except DbError as e:
+        raise _fail(str(e), EXIT_ENV_ERROR) from None
+
+
+def _model_package(proj: Project, conn) -> tuple[Model, TypeRules, Package]:
+    try:
+        model = proj.load_model()
+        rules = TypeRules.load(proj.root)
+        return model, rules, generate(model, rules, server_dialect(conn))
+    except (ProjectError, RulesError) as e:
+        raise _fail(str(e)) from None
+
+
+@app.command("deploy")
+def deploy_cmd(
+    project: ProjectOption = None,
+    recreate: Annotated[bool, typer.Option("--recreate", help="Пересоздать таблицы (тестовые данные удалятся).")]
+    = False,
+    env_file: EnvOption = Path(".env"),
+) -> None:
+    """Развернуть пакет SQL в базе: схемы, таблицы, функции. Журнал — meta.deploy_log."""
+    proj = _project(project)
+    with _connect(env_file) as conn:
+        model, rules, package = _model_package(proj, conn)
+        package.write(proj.out_dir / "sql")
+        typer.echo(f"Диалект: {package.dialect}, хеш пакета {package.sql_hash}")
+        try:
+            result = deploy(conn, package, recreate)
+        except DeployError as e:
+            raise _fail(str(e)) from None
+    counts = result.plan.counts()
+    typer.echo("План: " + ", ".join(f"{ACTION_TEXT[a]} {n}" for a, n in sorted(counts.items())))
+    for item in result.items:
+        if item.action in ("create", "recreate") and item.obj.kind == "table":
+            typer.echo(f"  {ACTION_TEXT[item.action]}: {item.obj.name}")
+    if not result.ok:
+        raise _fail(f"развёртывание отменено, {result.error}")
+    typer.secho(f"Развёрнуто, номер развёртывания {result.deploy_id}", fg=typer.colors.GREEN)
+
+
+@app.command("load")
+def load_cmd(
+    obj: Annotated[str, typer.Argument(help="DataSource (ZSALES_FF) или признак-справочник (0MATERIAL).")],
+    file: Annotated[Path, typer.Argument(help="CSV-файл: первая строка — имена полей.")],
+    force: Annotated[bool, typer.Option("--force", help="Загрузить файл, даже если он уже загружался.")] = False,
+    project: ProjectOption = None,
+    env_file: EnvOption = Path(".env"),
+) -> None:
+    """Загрузить CSV в базу и вывести номер загрузки (load_id)."""
+    proj = _project(project)
+    with _connect(env_file) as conn:
+        model, rules, _ = _model_package(proj, conn)
+        try:
+            res = load_file(conn, model, rules, obj, file, force)
+        except LoadError as e:
+            typer.secho(f"Ошибка: {e}", fg=typer.colors.RED, err=True)
+            for err in e.errors:
+                typer.secho(f"  {err}", fg=typer.colors.RED, err=True)
+            if e.total > len(e.errors):
+                typer.secho(f"  … и ещё {e.total - len(e.errors)}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(EXIT_DATA_ERROR) from None
+    typer.echo(f"Загружено строк: {res.rows} в {res.table}")
+    typer.secho(f"load_id: {res.load_id}", fg=typer.colors.GREEN)
+
+
+@app.command("run")
+def run_cmd(
+    load_id: Annotated[int, typer.Argument(help="Номер загрузки из dbtransfer load.")],
+    project: ProjectOption = None,
+    env_file: EnvOption = Path(".env"),
+) -> None:
+    """Прогнать загрузку по потоку состава переноса: трансформации и активации, одной транзакцией."""
+    proj = _project(project)
+    with _connect(env_file) as conn:
+        model, _, package = _model_package(proj, conn)
+        try:
+            result = run_load(conn, model, package, load_id, proj.config.scope_from,
+                              progress=lambda s: typer.echo(f"  {s.title}: {s.rows} строк"))
+        except (RunError, ScopeError) as e:
+            raise _fail(str(e)) from None
+    typer.secho(f"Загрузка {result.load_id} ({result.object_name}) активирована", fg=typer.colors.GREEN)
+
+
+@app.command("rollback")
+def rollback_cmd(
+    load_id: Annotated[int, typer.Argument(help="Номер неактивированной загрузки.")],
+    project: ProjectOption = None,
+    env_file: EnvOption = Path(".env"),
+) -> None:
+    """Откатить загрузку, которая ещё не прогонялась: удалить её строки из входной таблицы."""
+    proj = _project(project)
+    with _connect(env_file) as conn:
+        try:
+            deleted = rollback_load(conn, proj.load_model(), load_id)
+        except (RunError, ProjectError) as e:
+            raise _fail(str(e)) from None
+    typer.echo(f"Загрузка {load_id} откачена, удалено строк: {deleted}")
+
+
+@app.command("reconcile")
+def reconcile_cmd(
+    obj: Annotated[str, typer.Argument(help="ADSO, например ZSD_A02.")],
+    etalon: Annotated[Path, typer.Argument(help="CSV эталона с колонками по InfoObject.")],
+    tolerance: Annotated[float | None, typer.Option(help="Допуск по показателям (по умолчанию 0,01).")] = None,
+    project: ProjectOption = None,
+    env_file: EnvOption = Path(".env"),
+) -> None:
+    """Сверить активные данные ADSO с эталоном; протокол в Excel и meta.reconcile_result."""
+    proj = _project(project)
+    with _connect(env_file) as conn:
+        try:
+            r = reconcile(conn, proj.load_model(), obj, etalon, proj.out_dir, proj.root, tolerance)
+        except (ReconcileError, ProjectError) as e:
+            raise _fail(str(e)) from None
+    typer.echo(f"Сверка {obj} с {etalon.name}: " + ", ".join(f"{s} {r.count(s)}" for s in STATUSES))
+    for _, row in r.problems.head(10).iterrows():
+        key = " / ".join(str(row[k]) for k in r.spec.keys)
+        diffs = ", ".join(f"{m} {row[f'{m}_diff']:+g}" for m in r.spec.measures if row[f"{m}_diff"])
+        typer.echo(f"  {row['status']}: {key}" + (f" ({diffs})" if diffs else ""))
+    for lower in r.lower:
+        typer.echo(f"Нижний слой {lower.object_name}: " + ("совпал" if lower.ok else "тоже не совпал"))
+    typer.echo(f"Протокол: {r.excel}")
+    if not r.ok:
+        raise typer.Exit(EXIT_DATA_ERROR)
+
+
+@app.command("run-demo")
+def run_demo_cmd(
+    project: ProjectOption = None,
+    env_file: EnvOption = Path(".env"),
+) -> None:
+    """Сквозной сценарий на демо-наборе: от импорта до сверки, с итоговыми метриками."""
+    proj = _project(project)
+    with _connect(env_file) as conn:
+        try:
+            s = run_demo(proj, conn, typer.echo, server_dialect(conn))
+        except (ScenarioError, LoadError, RunError, ReconcileError, RulesError, ScopeError) as e:
+            raise _fail(f"сценарий остановлен: {e}") from None
+    r = s.report
+    rows = [
+        ("Объектов уровня 1", f"{r.by_level[1]} из {r.total} ({r.level1_share:.0%})"),
+        ("Ручная работа по нормам", f"{r.hours:g} ч"),
+        ("Строк SQL", str(s.package.sql_lines)),
+        ("Объектов БД", str(s.package.db_objects)),
+        ("Загрузок", ", ".join(f"{name}: {n} строк" for name, _, n in s.loads)),
+        *[(f"Сверка {x.object_name}", f"совпало {x.count('совпало')} из {len(x.detail)}") for x in s.reconciles],
+        ("Время", f"{s.seconds:.1f} с"),
+    ]
+    width = max(len(a) for a, _ in rows)
+    typer.echo("\nИтог")
+    for a, b in rows:
+        typer.echo(f"  {a.ljust(width)}  {b}")
+    if not s.ok:
+        raise _fail("сверка нашла расхождения")
+    typer.secho("Демо прошло: цифры совпали с эталоном", fg=typer.colors.GREEN)
 
 
 @db_app.command("check")

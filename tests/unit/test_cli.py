@@ -1,3 +1,4 @@
+import pytest
 from typer.testing import CliRunner
 
 from dbtransfer.cli import EXIT_ENV_ERROR, app
@@ -81,3 +82,15 @@ def test_generate(tmp_path):
 
     result = runner.invoke(app, ["generate", "--dialect", "oracle", "-p", project])
     assert result.exit_code == 1 and "диалект oracle неизвестен" in result.output
+
+
+@pytest.mark.parametrize("args", [["deploy"], ["load", "ZSALES_FF", "f.csv"], ["run", "1"], ["rollback", "1"],
+                                  ["reconcile", "ZSD_A02", "e.csv"], ["run-demo"]])
+def test_db_commands_without_server(tmp_path, args, monkeypatch):
+    for name in ("DBT_DB_HOST", "DBT_DB_PORT"):
+        monkeypatch.delenv(name, raising=False)
+    env = tmp_path / ".env"
+    env.write_text("DBT_DB_HOST=127.0.0.1\nDBT_DB_PORT=1\n", encoding="utf-8")
+    project = str(_demo_project(tmp_path / "p"))
+    result = runner.invoke(app, [*args, "-p", project, "--env-file", str(env)])
+    assert result.exit_code == 2 and "нет подключения" in result.output
