@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,12 +52,37 @@ class Package:
     model_name: str
     model_hash: str
     dialect: str
+    schema_prefix: str = "dbt"
     objects: list[SqlObject] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @property
+    def meta_schema(self) -> str:
+        return naming.schema("meta", self.schema_prefix)
+
+    @property
+    def data_schemas(self) -> list[str]:
+        """Схемы с данными: всё, кроме служебной."""
+        return [naming.schema(layer, self.schema_prefix) for layer in LAYERS if layer != "meta"]
+
+    @property
+    def sql_hash(self) -> str:
+        """Хеш всего пакета: меняется при изменении модели, правил или версии генератора."""
+        return hashlib.sha256(self.files()["deploy_all.sql"].encode("utf-8")).hexdigest()[:16]
+
+    @property
     def stubs(self) -> list[SqlObject]:
         return [o for o in self.objects if o.stub]
+
+    @property
+    def sql_lines(self) -> int:
+        """Строк SQL в файлах пакета без deploy_all.sql и drop_all.sql (метрика ФП-3.7)."""
+        return sum(text.count("\n") for name, text in self.files().items() if name[0].isdigit())
+
+    @property
+    def db_objects(self) -> int:
+        """Объектов базы: схемы, таблицы, функции и последовательности (метрика ФП-3.7)."""
+        return sum(len(SEQUENCES) if o.kind == "sequence" else 1 for o in self.objects)
 
     def counts(self) -> dict[str, int]:
         """Число объектов базы по видам: для сводки и метрик ФП-3.7."""
@@ -119,7 +145,7 @@ class Generator:
         self.env = _environment()
         self.tables = TableBuilder(model, rules)
         self.transforms = TransformBuilder(model, self.tables)
-        self.package = Package(model.name, model.content_hash(), dialect)
+        self.package = Package(model.name, model.content_hash(), dialect, model.schema_prefix)
         self._select_scope(scope)
 
     def _select_scope(self, scope: str | None) -> None:

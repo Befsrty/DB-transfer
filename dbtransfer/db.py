@@ -38,3 +38,10 @@ def check_connection(settings: DbSettings) -> ConnectionInfo:
         version = conn.execute("SELECT version()").fetchone()[0]
         can_create = conn.execute("SELECT has_database_privilege(current_database(), 'CREATE')").fetchone()[0]
     return ConnectionInfo(version=version, can_create_schema=bool(can_create))
+
+
+def server_dialect(conn: psycopg.Connection) -> str:
+    """Диалект генератора для сервера: greenplum для Greengage и Greenplum, иначе postgres."""
+    version = conn.execute("SELECT version()").fetchone()[0]
+    conn.rollback()
+    return "greenplum" if ("Greenplum" in version or "Greengage" in version) else "postgres"
