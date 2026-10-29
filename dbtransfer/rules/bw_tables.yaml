@@ -1,0 +1,326 @@
+# Таблицы SAP BW, которые нужно выгрузить через SE16 (ТЗ, приложение А).
+#
+# Для каждой таблицы:
+#   group       группа объектов, для списка в интерфейсе и в docs/bw-export.md
+#   purpose     зачем таблица нужна прототипу
+#   level       уровень автоматизации объектов из этой таблицы
+#   required    без таблицы импорт не строит модель
+#   hypothesis  состав полей не подтверждён на реальной системе
+#   columns     колонки CSV по порядку; required: true значит, что без колонки импорт не обойдётся
+#               (значение при этом может быть пустым, например флаг KEYFLAG)
+#
+# Синтетический набор demo/bw_export строится строго по этому файлу.
+# Если реальная выгрузка отличается, правится этот файл, а не код импорта.
+
+tables:
+  DD03L:
+    group: Поля таблиц
+    purpose: Поля, типы и ключи сгенерированных таблиц BW (в том числе активных таблиц ADSO /BIC/A<имя>2)
+    level: "1"
+    required: true
+    hypothesis: false
+    version_column: AS4LOCAL
+    columns:
+      TABNAME: {required: true}
+      FIELDNAME: {required: true}
+      AS4LOCAL: {required: true}
+      AS4VERS: {}
+      POSITION: {required: true}
+      KEYFLAG: {required: true}
+      ROLLNAME: {required: true}
+      CHECKTABLE: {}
+      INTTYPE: {}
+      INTLEN: {}
+      DATATYPE: {required: true}
+      LENG: {required: true}
+      DECIMALS: {required: true}
+      REFTABLE: {}
+      REFFIELD: {}
+
+  RSDIOBJ:
+    group: InfoObject
+    purpose: Список InfoObject и их вид
+    level: "1"
+    required: true
+    hypothesis: false
+    columns:
+      IOBJNM: {required: true}
+      OBJVERS: {required: true}
+      OBJSTAT: {}
+      IOBJTP: {required: true}
+
+  RSDIOBJT:
+    group: InfoObject
+    purpose: Тексты InfoObject
+    level: "1"
+    required: false
+    hypothesis: false
+    columns:
+      LANGU: {required: true}
+      IOBJNM: {required: true}
+      OBJVERS: {required: true}
+      TXTSH: {}
+      TXTLG: {required: true}
+
+  RSDCHABAS:
+    group: InfoObject
+    purpose: Тип и свойства признака
+    level: "1"
+    required: true
+    hypothesis: false
+    columns:
+      CHABASNM: {required: true}
+      OBJVERS: {required: true}
+      DATATP: {required: true}
+      INTLEN: {required: true}
+      OUTPUTLEN: {}
+      CONVEXIT: {}
+      LOWERCASE: {}
+      ATTRIBFL: {required: true}
+      TXTTABFL: {required: true}
+      HIETABFL: {}
+
+  RSDKYF:
+    group: InfoObject
+    purpose: Тип показателя, агрегация, единица или валюта
+    level: "1"
+    required: true
+    hypothesis: false
+    columns:
+      KYFNM: {required: true}
+      OBJVERS: {required: true}
+      KYFTP: {required: true}
+      DATATP: {required: true}
+      AGGREGATE: {required: true}
+      UNINM: {}
+      FIXCUKY: {}
+      FIXUNIT: {}
+
+  RSDBCHATR:
+    group: InfoObject
+    purpose: Атрибуты признака
+    level: "1"
+    required: false
+    hypothesis: false
+    columns:
+      CHABASNM: {required: true}
+      ATTRINM: {required: true}
+      OBJVERS: {required: true}
+      POSIT: {}
+      TIMDEPFL: {}
+
+  RSOADSO:
+    group: ADSO
+    purpose: Список ADSO и вид (по флагам)
+    level: "1"
+    required: true
+    # Флаги вида ADSO подобраны по свойствам из интерфейса BW/4HANA, имена колонок нужно проверить.
+    # staging: все флаги пусты; standard: ACTIVATE + CHANGELOG; cumulative: ACTIVATE + ALLCHARKEY;
+    # direct update: DIRECTUPDATE.
+    hypothesis: true
+    columns:
+      ADSONM: {required: true}
+      OBJVERS: {required: true}
+      OBJSTAT: {}
+      INFOAREA: {}
+      ACTIVATE: {required: true}
+      CHANGELOG: {required: true}
+      ALLCHARKEY: {required: true}
+      DIRECTUPDATE: {required: true}
+
+  RSOADSOT:
+    group: ADSO
+    purpose: Тексты ADSO
+    level: "1"
+    required: false
+    hypothesis: true
+    columns:
+      LANGU: {required: true}
+      ADSONM: {required: true}
+      OBJVERS: {required: true}
+      TXTLG: {required: true}
+
+  RSDS:
+    group: DataSource
+    purpose: DataSource, исходная система и тип источника
+    level: "1"
+    required: true
+    hypothesis: false
+    columns:
+      DATASOURCE: {required: true}
+      LOGSYS: {required: true}
+      OBJVERS: {required: true}
+      OBJSTAT: {}
+      # FILE для плоского файла
+      SRCTYPE: {required: true}
+      DELTAPROCESS: {}
+
+  RSDST:
+    group: DataSource
+    purpose: Тексты DataSource
+    level: "1"
+    required: false
+    hypothesis: false
+    columns:
+      LANGU: {required: true}
+      DATASOURCE: {required: true}
+      LOGSYS: {required: true}
+      OBJVERS: {required: true}
+      TXTLG: {required: true}
+
+  RSDSSEGFD:
+    group: DataSource
+    purpose: Поля DataSource
+    level: "1"
+    required: true
+    hypothesis: false
+    columns:
+      DATASOURCE: {required: true}
+      LOGSYS: {required: true}
+      OBJVERS: {required: true}
+      SEGID: {}
+      POSIT: {required: true}
+      FIELDNM: {required: true}
+      IOBJNM: {}
+      KEYFLAG: {}
+      DATATYPE: {required: true}
+      LENG: {required: true}
+      DECIMALS: {required: true}
+
+  RSTRAN:
+    group: Трансформации
+    purpose: Трансформации, стартовые и конечные рутины
+    level: "1-3"
+    required: true
+    hypothesis: false
+    columns:
+      TRANID: {required: true}
+      OBJVERS: {required: true}
+      OBJSTAT: {}
+      SOURCETYPE: {required: true}
+      SOURCESUBTYPE: {}
+      SOURCENAME: {required: true}
+      TARGETTYPE: {required: true}
+      TARGETSUBTYPE: {}
+      TARGETNAME: {required: true}
+      STARTROUTINE: {}
+      ENDROUTINE: {}
+      EXPERT: {}
+
+  RSTRANRULE:
+    group: Трансформации
+    purpose: Правила полей и их вид
+    level: "1-3"
+    required: true
+    # В BW вид правила хранится в шагах правила (RSTRANSTEP*); здесь он сведён в одну колонку RULETYPE:
+    # DIRECT, CONSTANT, FORMULA, TIME, READ_MD, ROUTINE. PARAM: константа, формула или читаемый атрибут.
+    hypothesis: true
+    columns:
+      TRANID: {required: true}
+      OBJVERS: {required: true}
+      RULEID: {required: true}
+      SEGID: {}
+      RULETYPE: {required: true}
+      PARAM: {}
+      CODEID: {}
+
+  RSTRANFIELD:
+    group: Трансформации
+    purpose: Поля источника (PARAMTYPE 0) и цели (PARAMTYPE 1) каждого правила
+    level: "1-3"
+    required: true
+    hypothesis: true
+    columns:
+      TRANID: {required: true}
+      OBJVERS: {required: true}
+      RULEID: {required: true}
+      SEGID: {}
+      PARAMTYPE: {required: true}
+      PARAMNM: {}
+      FIELDNM: {required: true}
+
+  RSAABAP:
+    group: Трансформации
+    purpose: Код ABAP-рутин
+    level: "3"
+    required: false
+    hypothesis: true
+    columns:
+      CODEID: {required: true}
+      OBJVERS: {required: true}
+      LINE_NO: {required: true}
+      LINE: {}
+
+  RSBKDTP:
+    group: DTP
+    purpose: Загрузки между объектами и режим (FULL или DELTA)
+    level: "1"
+    required: true
+    hypothesis: false
+    columns:
+      DTP: {required: true}
+      OBJVERS: {required: true}
+      OBJSTAT: {}
+      SRCTP: {required: true}
+      SRC: {required: true}
+      TGTTP: {required: true}
+      TGT: {required: true}
+      UPDMODE: {required: true}
+
+  RSOHCPR:
+    group: CompositeProvider
+    purpose: CompositeProvider и участники (одна строка на участника), только для отчёта
+    level: "2"
+    required: false
+    hypothesis: true
+    columns:
+      HCPRNM: {required: true}
+      OBJVERS: {required: true}
+      PARTPROV: {required: true}
+
+  RSDODSO:
+    group: Классические объекты BW
+    purpose: Классические DSO, только для отчёта
+    level: "2"
+    required: false
+    hypothesis: false
+    columns:
+      ODSOBJECT: {required: true}
+      OBJVERS: {required: true}
+      ODSOTYPE: {}
+
+  RSZCOMPDIR:
+    group: Запросы
+    purpose: BEx-запросы и провайдер, на котором они построены, только для отчёта
+    level: "3"
+    required: false
+    hypothesis: false
+    columns:
+      COMPID: {required: true}
+      OBJVERS: {required: true}
+      DEFTP: {}
+      INFOCUBE: {required: true}
+
+  RSHIEDIR:
+    group: Иерархии
+    purpose: Иерархии признаков, только для отчёта
+    level: "3"
+    required: false
+    hypothesis: false
+    columns:
+      HIEID: {required: true}
+      OBJVERS: {required: true}
+      IOBJNM: {required: true}
+      HIENM: {}
+
+  RSPCCHAIN:
+    group: Цепочки процессов
+    purpose: Шаги цепочек процессов, только для отчёта
+    level: "3"
+    required: false
+    hypothesis: false
+    columns:
+      CHAIN_ID: {required: true}
+      OBJVERS: {required: true}
+      TYPE: {required: true}
+      VARIANTE: {required: true}

@@ -1,0 +1,21 @@
+# Целевая база прототипа: Greengage 6 (открытый форк Greenplum, ближе всего к Arenadata DB 6).
+#   Запуск:            docker compose up -d
+#   Остановка:         docker compose down
+#   Сброс базы целиком: docker compose down -v
+# Первый запуск инициализирует кластер, это занимает 1–3 минуты.
+services:
+  greengage:
+    image: woblerr/greengage:6.32.0
+    container_name: dbtransfer-greengage
+    environment:
+      GREENPLUM_PASSWORD: ${DBT_DB_PASSWORD:-student}
+      GREENPLUM_DATABASE_NAME: ${DBT_DB_NAME:-demo}
+      TZ: Europe/Moscow
+    ports:
+      - "${DBT_DB_PORT:-5432}:5432"
+    volumes:
+      - gg_data:/data
+    restart: unless-stopped
+
+volumes:
+  gg_data:

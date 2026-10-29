@@ -1,0 +1,27 @@
+LANGU;IOBJNM;OBJVERS;TXTSH;TXTLG
+R;0DOC_NUMBER;A;Документ сбыта;Документ сбыта
+E;0DOC_NUMBER;A;Sales document;Sales document
+R;0S_ORD_ITEM;A;Позиция документа сб;Позиция документа сбыта
+E;0S_ORD_ITEM;A;Sales document item;Sales document item
+R;0SOLD_TO;A;Заказчик;Заказчик
+E;0SOLD_TO;A;Sold-to party;Sold-to party
+R;0COUNTRY;A;Страна;Страна
+E;0COUNTRY;A;Country;Country
+R;0MATERIAL;A;Материал;Материал
+E;0MATERIAL;A;Material;Material
+R;0MATL_GROUP;A;Группа материалов;Группа материалов
+E;0MATL_GROUP;A;Material group;Material group
+R;0DISTR_CHAN;A;Канал сбыта;Канал сбыта
+E;0DISTR_CHAN;A;Distribution channel;Distribution channel
+R;0CALDAY;A;Календарный день;Календарный день
+E;0CALDAY;A;Calendar day;Calendar day
+R;0CALMONTH;A;Календарный год/меся;Календарный год/месяц
+E;0CALMONTH;A;Calendar year/month;Calendar year/month
+R;0DOC_CURRCY;A;Валюта документа;Валюта документа
+E;0DOC_CURRCY;A;Document currency;Document currency
+R;0SALES_UNIT;A;Единица продажи;Единица продажи
+E;0SALES_UNIT;A;Sales unit;Sales unit
+R;0NETVAL_INV;A;Нетто-стоимость факт;Нетто-стоимость фактуры
+E;0NETVAL_INV;A;Net invoice value;Net invoice value
+R;0INV_QTY;A;Фактурированное коли;Фактурированное количество
+E;0INV_QTY;A;Invoiced quantity;Invoiced quantity
