@@ -4,15 +4,39 @@
 
 Приложение читает CSV-выгрузки таблиц метаданных BW (как из транзакции SE16), строит модель хранилища, оценивает сложность переноса, генерирует SQL для Greengage, разворачивает объекты в локальной базе, прогоняет тестовые данные по учебному потоку «Продажи» и сверяет результат с эталоном. Полные требования описаны в [docs/tz-prototype.md](docs/tz-prototype.md).
 
-## Что готово сейчас (шаг 1 из 5)
+## Что готово сейчас (шаги 1–2 из 5)
 
-- Каркас проекта на Python 3.12 (uv, pytest, ruff) и CI в GitHub Actions.
-- Целевая база Greengage 6 в Docker: `docker-compose.yml`.
-- Синтетическая выгрузка метаданных BW по потоку «Продажи» и объектам вне потока: `demo/bw_export/`, контрольный список в `demo/bw_export/EXPECTED.md`. Состав колонок задан в `dbtransfer/rules/bw_tables.yaml`.
-- Тестовые данные и эталоны: `demo/data/` (справочники, две загрузки плоского файла, эталоны для ZSD_A01 и ZSD_A02, испорченный эталон с 3 расхождениями) и пример из приложения Д ТЗ, посчитанный вручную: `demo/data/micro/`.
-- Команда `dbtransfer db check` для проверки подключения к базе.
+- **Шаг 1.** Каркас проекта на Python 3.12 (uv, pytest, ruff), CI в GitHub Actions, база Greengage 6 в Docker, синтетическая выгрузка метаданных BW (`demo/bw_export/`, контрольный список `EXPECTED.md`), тестовые данные и эталоны (`demo/data/`), команда `dbtransfer db check`.
+- **Шаг 2.** Импорт выгрузок BW в модель хранилища, проверка файлов, отчёт о сложности в Excel, состав переноса и lineage полей в командной строке.
 
-Импорт, отчёт о сложности, генерация SQL, развёртывание, сверка и веб-интерфейс появятся в следующих шагах (ТЗ, раздел 5).
+Генерация SQL, развёртывание, сверка и веб-интерфейс появятся в следующих шагах (ТЗ, раздел 5).
+
+## Как пользоваться (шаг 2)
+
+Команды работают с проектом — папкой с `project.yaml`. По умолчанию это текущая папка, а в корне репозитория — демо-проект `demo/`; другой проект задаётся `-p <папка>`.
+
+```
+uv run dbtransfer tables                          # какие таблицы BW выгрузить и как (подробно: docs/bw-export.md)
+uv run dbtransfer import                          # импорт demo/bw_export -> demo/model.json, demo/out/import_check.xlsx
+uv run dbtransfer report                          # отчёт о сложности -> demo/out/complexity.xlsx
+uv run dbtransfer scope --from ZSD_A02            # состав переноса: поток от ZSD_A02 вниз до источников
+uv run dbtransfer lineage ZSD_A02.0NETVAL_INV     # откуда пришло поле
+uv run dbtransfer lineage ZSALES_FF.NETVAL --up   # куда идёт поле
+uv run dbtransfer init C:\work\my-bw            # новый проект для своей выгрузки
+```
+
+Пример lineage на демо-наборе:
+
+```
+ZSD_A02.0NETVAL_INV [dbt_mart.zsd_a02_active.netval_inv]
+└─ ← прямое присвоение (ZSD_A01 → ZSD_A02) ZSD_A01.0NETVAL_INV [dbt_dwh.zsd_a01_active.netval_inv]
+   ├─ ← формула NETVAL - DISCOUNT (ZSALES_FF → ZSD_A01) ZSALES_FF.NETVAL [dbt_stg.zsales_ff.netval]
+   └─ ← формула NETVAL - DISCOUNT (ZSALES_FF → ZSD_A01) ZSALES_FF.DISCOUNT [dbt_stg.zsales_ff.discount]
+```
+
+В квадратных скобках — где поле будет лежать в Greengage (схема.таблица.колонка). Правила обхода: формула ветвит путь по своим полям, чтение атрибута — в поле-ключ и справочник, константа завершает путь, рутина обрывает его, а шаг через трансформацию с конечной рутиной помечается «возможно изменено рутиной».
+
+Нормы трудоёмкости для отчёта лежат в `dbtransfer/rules/effort_norms.yaml`, правила имён в базе — в `dbtransfer/rules/naming.yaml`.
 
 ## Что нужно установить
 
@@ -104,7 +128,11 @@ uv run python demo/tools/make_demo_data.py   # данные и эталоны ->
 
 ```
 dbtransfer/          пакет приложения
-  rules/             bw_tables.yaml: какие таблицы и колонки BW ожидает импорт
+  rules/             bw_tables.yaml, naming.yaml, effort_norms.yaml
+  model/             модель метаданных (pydantic), сохраняется в model.json
+  importers/         импорт CSV-выгрузок SE16
+  analysis/          граф и состав переноса, уровни и трудоёмкость, Excel-отчёты, lineage
+  project.py         проект: project.yaml, model.json, out/
   config.py          правила и подключение из .env
   db.py              подключение к базе
   cli.py             команды dbtransfer

@@ -1,0 +1,15 @@
+# Имена объектов в Greengage (ТЗ, ФП-5.6). {prefix} — префикс схем проекта (project.yaml),
+# {name} — имя объекта BW в нижнем регистре без ведущего «0» и пространства /BIC/.
+schemas:
+  stg: "{prefix}_stg"     # входные таблицы DataSource и входящие таблицы ADSO
+  md: "{prefix}_md"       # атрибуты и тексты признаков
+  dwh: "{prefix}_dwh"     # активные данные и журналы изменений ADSO
+  mart: "{prefix}_mart"   # ADSO верхнего уровня
+  meta: "{prefix}_meta"   # служебные таблицы
+tables:
+  datasource: "{name}"
+  inbound: "{name}_inbound"
+  active: "{name}_active"
+  change_log: "{name}_changelog"
+  md_attr: "{name}_attr"
+  md_text: "{name}_text"
