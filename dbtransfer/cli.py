@@ -14,6 +14,7 @@ from dbtransfer.analysis.graph import ScopeError, scope_from
 from dbtransfer.analysis.lineage import DOWN, UP, LineageError, lineage, render
 from dbtransfer.config import load_bw_tables, load_db_settings
 from dbtransfer.db import DbError, check_connection
+from dbtransfer.generator import DIALECTS, RulesError, TypeRules, generate
 from dbtransfer.importers.bw_csv import ImportFailed, import_bw_export
 from dbtransfer.model import Severity
 from dbtransfer.project import Project, ProjectError, find_project, init_project
@@ -208,6 +209,38 @@ def lineage_cmd(
     except (ProjectError, ScopeError, LineageError) as e:
         raise _fail(str(e)) from None
     typer.echo(render(tree, direction))
+
+
+@app.command("generate")
+def generate_cmd(
+    project: ProjectOption = None,
+    dialect: Annotated[str, typer.Option(help=f"Диалект SQL: {', '.join(DIALECTS)}.")] = "greenplum",
+    scope: Annotated[bool, typer.Option("--scope", help="Только состав переноса из project.yaml.")] = False,
+) -> None:
+    """Сгенерировать пакет SQL в out/sql/: DDL, функции активации и трансформаций."""
+    if dialect not in DIALECTS:
+        raise _fail(f"диалект {dialect} неизвестен, допустимо: {', '.join(DIALECTS)}")
+    proj = _project(project)
+    try:
+        model = proj.load_model()
+        rules = TypeRules.load(proj.root)
+        if scope and not proj.config.scope_from:
+            raise _fail("состав переноса не задан: dbtransfer scope --from <объект>")
+        package = generate(model, rules, dialect, scope=proj.config.scope_from if scope else None)
+    except (ProjectError, RulesError, ScopeError) as e:
+        raise _fail(str(e)) from None
+    out = proj.out_dir / "sql"
+    paths = package.write(out)
+    kinds = package.counts()
+    lines = sum(p.read_text(encoding="utf-8").count("\n") for p in paths if p.name[0].isdigit())
+    typer.echo(f"Схем: {kinds.get('schema', 0)}, таблиц: {kinds.get('table', 0)}, "
+               f"функций: {kinds.get('function', 0)}; строк SQL: {lines}")
+    for o in package.stubs:
+        typer.secho(f"  Заготовка, требует ручной доработки: {o.bw_object} ({'; '.join(o.stub)})",
+                    fg=typer.colors.YELLOW)
+    for w in package.warnings:
+        typer.secho(f"  {w}", fg=typer.colors.YELLOW)
+    typer.echo(f"Пакет SQL: {out} (всё одним файлом: deploy_all.sql)")
 
 
 @db_app.command("check")

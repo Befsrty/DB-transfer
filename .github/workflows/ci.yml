@@ -17,3 +17,39 @@ jobs:
         run: uv run ruff check .
       - name: Модульные тесты
         run: uv run pytest --cov=dbtransfer --cov-report=term-missing --cov-fail-under=70
+
+  # Интеграционные тесты с Greengage (ТЗ 4.7, «Ж»): развёртывание пакета SQL и прогон примера приложения Д
+  greengage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      greengage:
+        image: woblerr/greengage:6.32.0
+        options: --hostname greengage
+        env:
+          GREENPLUM_PASSWORD: student
+          GREENPLUM_DATABASE_NAME: demo
+        ports:
+          - 5432:5432
+    env:
+      DBT_DB_HOST: localhost
+      DBT_DB_PORT: "5432"
+      DBT_DB_NAME: demo
+      DBT_DB_USER: gpadmin
+      DBT_DB_PASSWORD: student
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Установка зависимостей
+        run: uv sync --locked
+      - name: Ожидание готовности Greengage
+        run: |
+          for i in $(seq 1 60); do
+            if PGPASSWORD=student psql -h localhost -U gpadmin -d demo -tAc "select 1" >/dev/null 2>&1; then
+              echo "Greengage готов"; exit 0
+            fi
+            sleep 5
+          done
+          echo "Greengage не поднялся за 5 минут"; exit 1
+      - name: Интеграционные тесты
+        run: uv run pytest -m db -v

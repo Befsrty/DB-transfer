@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS {{ t.qname }} (
+{% for c in t.columns %}
+    {{ c.sql_name.ljust(t.width) }} {{ c.type }}{% if c.not_null %} NOT NULL{% endif %}{% if not loop.last or t.primary_key %},{% endif %}
+
+{% endfor %}
+{% if t.primary_key %}
+    PRIMARY KEY ({{ t.primary_key | join(", ") }})
+{% endif %}
+){% if greenplum %}{% if t.storage_options %}
+
+WITH ({{ t.storage_options }}){% endif %}
+
+{% if t.distributed_by %}DISTRIBUTED BY ({{ t.distributed_by | join(", ") }}){% else %}DISTRIBUTED RANDOMLY{% endif %}{% endif %};
+COMMENT ON TABLE {{ t.qname }} IS {{ t.comment | sql_literal }};
+{% for c in t.columns %}
+COMMENT ON COLUMN {{ t.qname }}.{{ c.sql_name }} IS {{ c.comment | sql_literal }};
+{% endfor %}

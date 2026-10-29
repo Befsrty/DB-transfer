@@ -62,3 +62,22 @@ def test_tables_lists_required_columns():
 def test_init(tmp_path):
     result = runner.invoke(app, ["init", str(tmp_path / "new")])
     assert result.exit_code == 0 and (tmp_path / "new" / "project.yaml").is_file()
+
+
+def test_generate(tmp_path):
+    project = str(_demo_project(tmp_path))
+    assert runner.invoke(app, ["import", "-p", project]).exit_code == 0
+    result = runner.invoke(app, ["generate", "-p", project])
+    assert result.exit_code == 0, result.output
+    assert "таблиц: 22, функций: 8" in result.output and "ZSD_A01 → ZSD_A03 (конечная рутина ABAP)" in result.output
+    assert (tmp_path / "out" / "sql" / "deploy_all.sql").is_file()
+
+    result = runner.invoke(app, ["generate", "--scope", "--dialect", "postgres", "-p", project])
+    assert result.exit_code == 0 and "таблиц: 15, функций: 4" in result.output
+
+    (tmp_path / "type_rules.yaml").write_text("storage: {active: columnar}\n", encoding="utf-8")
+    result = runner.invoke(app, ["generate", "-p", project])
+    assert result.exit_code == 1 and "columnar" in result.output
+
+    result = runner.invoke(app, ["generate", "--dialect", "oracle", "-p", project])
+    assert result.exit_code == 1 and "диалект oracle неизвестен" in result.output

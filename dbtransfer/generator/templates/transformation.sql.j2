@@ -1,0 +1,38 @@
+-- Трансформация {{ t.source_name }} → {{ t.target_name }} ({{ t.tr_id }})
+-- {{ t.mode_text }}
+{% for note in t.notes %}
+-- {{ note }}
+{% endfor %}
+{% if t.stub %}
+--
+-- ЗАГОТОВКА: требует ручной доработки. Причины:
+{% for reason in t.stub %}
+--   - {{ reason }}
+{% endfor %}
+-- Прогон через эту трансформацию заблокирован. Черновик INSERT по поддерживаемым правилам:
+--
+{{ t.insert | sql_comment }}
+{% for r in t.routines %}
+--
+-- Рутина ABAP: {{ r.title }}
+{{ r.code | sql_comment }}
+{% endfor %}
+{% endif %}
+CREATE OR REPLACE FUNCTION {{ t.fn }}(p_load_id bigint)
+RETURNS bigint
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_rows bigint;
+BEGIN
+{% if t.stub %}
+    RAISE EXCEPTION '{{ t.message | replace("'", "''") }}';
+    RETURN 0;
+{% else %}
+{{ t.insert | indent(4, true) }}
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    RETURN v_rows;
+{% endif %}
+END;
+$$;
+COMMENT ON FUNCTION {{ t.fn }}(bigint) IS {{ t.comment | sql_literal }};

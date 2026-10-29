@@ -1,3 +1,4 @@
 # Выгрузки и тестовые данные хранятся байт в байт (кодировка, CRLF), git их не трогает
 demo/bw_export/** -text
 demo/data/** -text
+tests/golden/** -text

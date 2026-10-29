@@ -1,0 +1,46 @@
+# Правила перевода типов, хранения и распределения (ТЗ, 4.3.3, 4.3.4, ФП-5.4, ФП-5.5).
+# В проекте можно положить свой type_rules.yaml рядом с project.yaml: его ключи заменят эти.
+
+# Тип ABAP Dictionary -> тип Greengage. {length}, {decimals} — из DD03L / RSDSSEGFD.
+types:
+  CHAR: "varchar({length})"
+  NUMC: "varchar({length})"     # никогда не число: теряются ведущие нули
+  DATS: "date"
+  TIMS: "time"
+  CURR: "numeric({length},{decimals})"
+  QUAN: "numeric({length},{decimals})"
+  DEC: "numeric({length},{decimals})"
+  INT1: "smallint"
+  INT2: "smallint"
+  INT4: "integer"
+  INT8: "bigint"
+  FLTP: "double precision"
+  LANG: "char(1)"
+  CUKY: "varchar({length})"
+  UNIT: "varchar({length})"
+  STRING: "text"
+  SSTRING: "text"
+# Для прочих типов (RAW, ACCP и т. п.)
+default_type: "text"
+
+# Пустая дата в ключевом поле хранится как заглушка, а не NULL
+date_key_placeholder: "0001-01-01"
+
+# Хранение таблиц: heap или append-optimized (AO) колоночное со сжатием
+storage:
+  active: heap
+  md: heap
+  inbound: ao_column
+  change_log: ao_column
+  datasource: ao_column
+storage_options:
+  ao_column: "appendonly=true, orientation=column, compresstype=zstd, compresslevel=1"
+
+# Ключ распределения по умолчанию: первое поле первичного ключа.
+# Таблицы без ключа (staging, входные таблицы DataSource) распределяются случайно.
+# Переопределение для отдельного объекта:
+# overrides:
+#   ZSD_A01:
+#     distributed_by: [doc_number, s_ord_item]
+#     storage: {inbound: heap}
+overrides: {}
