@@ -16,4 +16,4 @@ jobs:
       - name: Линтер
         run: uv run ruff check .
       - name: Модульные тесты
-        run: uv run pytest --cov=dbtransfer --cov-report=term-missing
+        run: uv run pytest --cov=dbtransfer --cov-report=term-missing --cov-fail-under=70

@@ -10,6 +10,8 @@ dependencies = [
     "pyyaml>=6.0",
     "typer>=0.12",
     "psycopg[binary]>=3.2",
+    "networkx>=3.3",
+    "openpyxl>=3.1",
 ]
 
 [project.scripts]
