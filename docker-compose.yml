@@ -7,6 +7,9 @@ services:
   greengage:
     image: woblerr/greengage:6.32.0
     container_name: dbtransfer-greengage
+    # Greenplum запоминает имя хоста в конфигурации кластера. Без фиксированного имени
+    # пересозданный контейнер получает новое и не находит свои сегменты
+    hostname: greengage
     environment:
       GREENPLUM_PASSWORD: ${DBT_DB_PASSWORD:-student}
       GREENPLUM_DATABASE_NAME: ${DBT_DB_NAME:-demo}

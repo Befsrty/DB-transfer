@@ -70,6 +70,7 @@ uv run pytest -m db
 
 | Симптом | Что сделать |
 |---|---|
+| В `docker compose logs` бесконечно `getaddrinfo ...: Temporary failure in name resolution` | База создана контейнером с другим именем хоста (старая версия `docker-compose.yml`). Пересоздай базу: `docker compose down -v`, затем `docker compose up -d` (тестовые данные удалятся) |
 | `port is already allocated` при `docker compose up` | Порт из `.env` занят. Поставь другой свободный `DBT_DB_PORT` (например, 25432) и выполни `docker compose up -d` ещё раз |
 | `db check`: ошибка про пароль `gpadmin` или нечитаемые символы вместо текста | На порт отвечает не Greengage, а другой PostgreSQL на компьютере (так бывает, если в `.env` порт 5432). Проверь: `netstat -ano \| findstr <порт>` в Windows, `ss -ltnp \| grep <порт>` в Linux. Поставь свободный `DBT_DB_PORT`, выполни `docker compose up -d` и снова `db check` |
 | `db check`: Connection refused | Контейнер не запущен или ещё инициализируется. Посмотри `docker compose ps` и `docker compose logs -f` |
