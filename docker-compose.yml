@@ -12,7 +12,8 @@ services:
       GREENPLUM_DATABASE_NAME: ${DBT_DB_NAME:-demo}
       TZ: Europe/Moscow
     ports:
-      - "${DBT_DB_PORT:-5432}:5432"
+      # Снаружи 15432, а не 5432: стандартный порт часто занят локальным PostgreSQL
+      - "${DBT_DB_PORT:-15432}:5432"
     volumes:
       - gg_data:/data
     restart: unless-stopped

@@ -43,7 +43,7 @@ def load_bw_tables(path: Path = RULES_DIR / "bw_tables.yaml") -> dict[str, BwTab
 
 class DbSettings(BaseModel):
     host: str = "localhost"
-    port: int = 5432
+    port: int = 15432
     dbname: str = "demo"
     user: str = "gpadmin"
     password: str = Field(default="", repr=False)
@@ -85,7 +85,7 @@ def load_db_settings(env_file: Path = Path(".env")) -> DbSettings:
 
     return DbSettings(
         host=get("DBT_DB_HOST", "localhost"),
-        port=int(get("DBT_DB_PORT", "5432")),
+        port=int(get("DBT_DB_PORT", "15432")),
         dbname=get("DBT_DB_NAME", "demo"),
         user=get("DBT_DB_USER", "gpadmin"),
         password=get("DBT_DB_PASSWORD", ""),

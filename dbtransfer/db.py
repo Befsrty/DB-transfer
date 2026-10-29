@@ -26,7 +26,10 @@ def connect(settings: DbSettings, timeout: int = 10) -> psycopg.Connection:
         raise DbError(
             f"нет подключения к {settings.describe()}: {str(e).strip()}. "
             "Проверьте, что контейнер запущен (docker compose ps) и параметры в .env совпадают с docker-compose.yml. "
-            "Сразу после первого docker compose up база готовится 1–3 минуты."
+            "Сразу после первого docker compose up база готовится 1–3 минуты. "
+            "Если ошибка про пароль или текст ошибки нечитаемый, на этот порт, скорее всего, отвечает другой "
+            "PostgreSQL на компьютере: посмотрите, кто слушает порт (Windows: netstat -ano | findstr "
+            f"{settings.port}), и поставьте в .env свободный DBT_DB_PORT."
         ) from e
 
 

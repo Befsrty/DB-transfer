@@ -64,13 +64,14 @@ uv run pytest -m db
 
 ### Подключение из DBeaver
 
-Тип подключения PostgreSQL (или Greenplum), хост `localhost`, порт из `.env` (по умолчанию 5432), база `demo`, пользователь `gpadmin`, пароль из `.env` (по умолчанию `student`).
+Тип подключения PostgreSQL (или Greenplum), хост `localhost`, порт из `.env` (по умолчанию 15432), база `demo`, пользователь `gpadmin`, пароль из `.env` (по умолчанию `student`).
 
 ## Частые проблемы
 
 | Симптом | Что сделать |
 |---|---|
-| `port is already allocated` при `docker compose up` | Порт 5432 занят, обычно локальным PostgreSQL. Поставь `DBT_DB_PORT=5433` в `.env` и выполни `docker compose up -d` ещё раз |
+| `port is already allocated` при `docker compose up` | Порт из `.env` занят. Поставь другой свободный `DBT_DB_PORT` (например, 25432) и выполни `docker compose up -d` ещё раз |
+| `db check`: ошибка про пароль `gpadmin` или нечитаемые символы вместо текста | На порт отвечает не Greengage, а другой PostgreSQL на компьютере (так бывает, если в `.env` порт 5432). Проверь: `netstat -ano \| findstr <порт>` в Windows, `ss -ltnp \| grep <порт>` в Linux. Поставь свободный `DBT_DB_PORT`, выполни `docker compose up -d` и снова `db check` |
 | `db check`: Connection refused | Контейнер не запущен или ещё инициализируется. Посмотри `docker compose ps` и `docker compose logs -f` |
 | `db check`: password authentication failed | Пароль в `.env` поменяли после первого запуска. Пароль задаётся при создании базы: верни старый или пересоздай базу командой `docker compose down -v` (данные удалятся) |
 | Docker Desktop на Windows не стартует | Включи WSL2: в PowerShell от администратора `wsl --install`, перезагрузи компьютер |
