@@ -1,0 +1,11 @@
+-- Последовательности номеров: загрузки, развёртывания, сверки. В Greengage 6 нет CREATE SEQUENCE IF NOT EXISTS.
+DO $$
+BEGIN
+{% for seq in sequences %}
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = {{ schema | sql_literal }} AND c.relname = {{ seq | sql_literal }}) THEN
+        CREATE SEQUENCE {{ schema_sql }}.{{ seq }};
+    END IF;
+{% endfor %}
+END
+$$;

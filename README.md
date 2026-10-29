@@ -4,14 +4,15 @@
 
 Приложение читает CSV-выгрузки таблиц метаданных BW (как из транзакции SE16), строит модель хранилища, оценивает сложность переноса, генерирует SQL для Greengage, разворачивает объекты в локальной базе, прогоняет тестовые данные по учебному потоку «Продажи» и сверяет результат с эталоном. Полные требования описаны в [docs/tz-prototype.md](docs/tz-prototype.md).
 
-## Что готово сейчас (шаги 1–2 из 5)
+## Что готово сейчас (шаги 1–3 из 5)
 
 - **Шаг 1.** Каркас проекта на Python 3.12 (uv, pytest, ruff), CI в GitHub Actions, база Greengage 6 в Docker, синтетическая выгрузка метаданных BW (`demo/bw_export/`, контрольный список `EXPECTED.md`), тестовые данные и эталоны (`demo/data/`), команда `dbtransfer db check`.
 - **Шаг 2.** Импорт выгрузок BW в модель хранилища, проверка файлов, отчёт о сложности в Excel, состав переноса и lineage полей в командной строке.
+- **Шаг 3.** Генерация пакета SQL для Greengage: таблицы справочников, DataSource и всех видов ADSO, функции активации и трансформаций, служебные таблицы.
 
-Генерация SQL, развёртывание, сверка и веб-интерфейс появятся в следующих шагах (ТЗ, раздел 5).
+Развёртывание из приложения, загрузка файлов, прогон, сверка и веб-интерфейс появятся в следующих шагах (ТЗ, раздел 5).
 
-## Как пользоваться (шаг 2)
+## Как пользоваться
 
 Команды работают с проектом — папкой с `project.yaml`. По умолчанию это текущая папка, а в корне репозитория — демо-проект `demo/`; другой проект задаётся `-p <папка>`.
 
@@ -22,6 +23,8 @@ uv run dbtransfer report                          # отчёт о сложнос
 uv run dbtransfer scope --from ZSD_A02            # состав переноса: поток от ZSD_A02 вниз до источников
 uv run dbtransfer lineage ZSD_A02.0NETVAL_INV     # откуда пришло поле
 uv run dbtransfer lineage ZSALES_FF.NETVAL --up   # куда идёт поле
+uv run dbtransfer generate                        # пакет SQL -> demo/out/sql
+uv run dbtransfer generate --scope                # только состав переноса из project.yaml
 uv run dbtransfer init C:\work\my-bw            # новый проект для своей выгрузки
 ```
 
@@ -35,6 +38,26 @@ ZSD_A02.0NETVAL_INV [dbt_mart.zsd_a02_active.netval_inv]
 ```
 
 В квадратных скобках — где поле будет лежать в Greengage (схема.таблица.колонка). Правила обхода: формула ветвит путь по своим полям, чтение атрибута — в поле-ключ и справочник, константа завершает путь, рутина обрывает его, а шаг через трансформацию с конечной рутиной помечается «возможно изменено рутиной».
+
+### Пакет SQL
+
+`generate` пишет в `out/sql/` файлы в порядке развёртывания:
+
+| Файл | Что внутри |
+|---|---|
+| `010_schemas.sql` | Схемы `dbt_stg`, `dbt_md`, `dbt_dwh`, `dbt_mart`, `dbt_meta` |
+| `020_meta.sql` | Журнал загрузок, журнал развёртываний, результаты сверок, последовательности номеров |
+| `030_md.sql` | Атрибуты и тексты признаков (`dbt_md.material_attr`, `dbt_md.material_text`, …) |
+| `040_datasources.sql` | Входные таблицы DataSource с колонками `load_id`, `record_no` |
+| `050_adso.sql` | Таблицы ADSO: входящая, активные данные, журнал изменений по виду ADSO |
+| `060_activation.sql` | Функции активации: `dbt_dwh.activate_zsd_a01(load_id)` и т. д. |
+| `070_transformations.sql` | Функции трансформаций: `dbt_dwh.tr_zsales_ff__zsd_a01(load_id)` и т. д. |
+| `deploy_all.sql` | Всё одним файлом для `psql` (первая строка — команда `psql`, DBeaver её не понимает) |
+| `drop_all.sql` | Удаление схем прототипа вместе с данными |
+
+Развернуть пакет в Greengage без приложения (в шаге 4 это будет делать `dbtransfer deploy`): в DBeaver открыть по очереди файлы `010`…`070` и выполнить каждый как скрипт (Alt+X) или, если установлен клиент PostgreSQL, `psql -h localhost -p 15432 -U gpadmin -d demo -f demo/out/sql/deploy_all.sql`. Повторный запуск ничего не ломает: таблицы создаются с `IF NOT EXISTS`, функции заменяются.
+
+Трансформация с ABAP-рутиной или правилом, которое прототип не переводит (в демо — `ZSD_A01 → ZSD_A03`), создаётся как заготовка: в комментарии черновик SQL и код рутины, а сама функция падает с сообщением «требует ручной доработки». Типы, хранение и ключи распределения задаются в `dbtransfer/rules/type_rules.yaml`; свой `type_rules.yaml` рядом с `project.yaml` переопределяет их для проекта, раздел `overrides` — для отдельного объекта. Параметр `--dialect postgres` убирает из SQL особенности Greenplum (хранение и распределение) для обычного PostgreSQL.
 
 Нормы трудоёмкости для отчёта лежат в `dbtransfer/rules/effort_norms.yaml`, правила имён в базе — в `dbtransfer/rules/naming.yaml`.
 
@@ -86,6 +109,10 @@ Docker Desktop должен быть запущен перед `docker compose u
 uv run pytest -m db
 ```
 
+Тесты разворачивают сгенерированный SQL в отдельных схемах `dbtest_*` (демо-схемы `dbt_*` не трогаются) и прогоняют через функции пример из приложения Д ТЗ: активные данные `ZSD_A01`, журнал изменений и `ZSD_A02` должны совпасть с `demo/data/micro/` строка в строку.
+
+Тесты генерации сравнивают SQL с эталонными файлами в `tests/golden/sql/`. Если SQL поменялся намеренно, обновите эталоны командой `UPDATE_GOLDEN=1 uv run pytest tests/unit/test_generator.py` (в PowerShell: `$env:UPDATE_GOLDEN=1; uv run pytest tests/unit/test_generator.py; Remove-Item Env:UPDATE_GOLDEN`) и просмотрите разницу в `git diff`.
+
 ### Подключение из DBeaver
 
 Тип подключения PostgreSQL (или Greenplum), хост `localhost`, порт из `.env` (по умолчанию 15432), база `demo`, пользователь `gpadmin`, пароль из `.env` (по умолчанию `student`).
@@ -128,10 +155,11 @@ uv run python demo/tools/make_demo_data.py   # данные и эталоны ->
 
 ```
 dbtransfer/          пакет приложения
-  rules/             bw_tables.yaml, naming.yaml, effort_norms.yaml
+  rules/             bw_tables.yaml, naming.yaml, effort_norms.yaml, type_rules.yaml
   model/             модель метаданных (pydantic), сохраняется в model.json
   importers/         импорт CSV-выгрузок SE16
   analysis/          граф и состав переноса, уровни и трудоёмкость, Excel-отчёты, lineage
+  generator/         генерация SQL: типы, формулы, таблицы, активация, трансформации, шаблоны Jinja2
   project.py         проект: project.yaml, model.json, out/
   config.py          правила и подключение из .env
   db.py              подключение к базе
@@ -143,6 +171,7 @@ demo/
   project.yaml       демо-проект
 tests/
   unit/              без базы
+  golden/sql/        эталонный пакет SQL демо-проекта
   integration/       с Greengage (pytest -m db)
 docs/                ТЗ и документация
 ```

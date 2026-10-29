@@ -21,7 +21,7 @@ class ConnectionInfo:
 
 def connect(settings: DbSettings, timeout: int = 10) -> psycopg.Connection:
     try:
-        return psycopg.connect(**settings.conninfo(), connect_timeout=timeout)
+        return psycopg.connect(**settings.conninfo(), connect_timeout=timeout, client_encoding="utf8")
     except psycopg.OperationalError as e:
         raise DbError(
             f"нет подключения к {settings.describe()}: {str(e).strip()}. "

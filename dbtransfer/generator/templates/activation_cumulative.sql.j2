@@ -1,0 +1,32 @@
+-- Активация ADSO {{ adso }} (cumulative) по ТЗ 4.3.5: показатели загрузки суммируются по ключу
+-- и прибавляются к активным данным, новый ключ вставляется. Строки с нулевыми суммами остаются.
+CREATE OR REPLACE FUNCTION {{ fn }}(p_load_id bigint)
+RETURNS bigint
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_changed bigint := 0;
+    v_new bigint;
+BEGIN
+{% if measures %}
+    UPDATE {{ active }} a
+    SET {{ sums | join(",\n        ") }}
+    FROM ({{ grouped }}) g
+    WHERE {{ join_ag }};
+    GET DIAGNOSTICS v_changed = ROW_COUNT;
+
+{% endif %}
+    INSERT INTO {{ active }} ({{ columns | join(", ") }})
+    SELECT {{ g_columns | join(", ") }}
+    FROM ({{ grouped }}) g
+    WHERE NOT EXISTS (SELECT 1 FROM {{ active }} a WHERE {{ join_ag }});
+    GET DIAGNOSTICS v_new = ROW_COUNT;
+
+    UPDATE {{ load_log }}
+    SET message = concat_ws('; ', nullif(message, ''),
+        format('{{ adso }}: строк новых %s, изменённых %s', v_new, v_changed))
+    WHERE load_id = p_load_id;
+    RETURN v_new + v_changed;
+END;
+$$;
+COMMENT ON FUNCTION {{ fn }}(bigint) IS {{ comment | sql_literal }};

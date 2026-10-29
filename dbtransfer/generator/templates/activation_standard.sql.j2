@@ -1,0 +1,53 @@
+-- Активация ADSO {{ adso }} (standard) по ТЗ 4.3.5: из дублей ключа берётся запись с наибольшим record_no;
+-- новый ключ — вставка и N в журнал, существующий — пара X / ' ' в журнал и замена строки.
+CREATE OR REPLACE FUNCTION {{ fn }}(p_load_id bigint)
+RETURNS bigint
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_bad bigint;
+    v_changed bigint;
+    v_rows bigint;
+BEGIN
+    SELECT count(*) INTO v_bad
+    FROM {{ inbound }}
+    WHERE load_id = p_load_id AND recordmode IN ('D', 'R');
+    IF v_bad > 0 THEN
+        RAISE EXCEPTION '{{ adso }}: в загрузке % есть записи с recordmode D или R (%), удаления и обратные записи не поддерживаются',
+            p_load_id, v_bad;
+    END IF;
+
+    -- Before image (X): старые значения, показатели с минусом
+    INSERT INTO {{ change_log }} (load_id, record_no, recordmode, {{ columns | join(", ") }})
+    SELECT p_load_id, d.record_no, 'X', {{ before | join(", ") }}
+    FROM {{ active }} a
+    JOIN ({{ dedup }}) d
+      ON {{ join_ad }};
+    GET DIAGNOSTICS v_changed = ROW_COUNT;
+
+    -- After image (' ') для существующих ключей и N для новых
+    INSERT INTO {{ change_log }} (load_id, record_no, recordmode, {{ columns | join(", ") }})
+    SELECT p_load_id, d.record_no, CASE WHEN a.{{ first_key }} IS NULL THEN 'N' ELSE ' ' END,
+           {{ after | join(", ") }}
+    FROM ({{ dedup }}) d
+    LEFT JOIN {{ active }} a
+      ON {{ join_ad }};
+
+    -- Замена строк активных данных
+    DELETE FROM {{ active }} a
+    USING (SELECT DISTINCT {{ key_list }} FROM {{ inbound }} WHERE load_id = p_load_id) d
+    WHERE {{ join_ad }};
+
+    INSERT INTO {{ active }} ({{ columns | join(", ") }})
+    SELECT {{ after | join(", ") }}
+    FROM ({{ dedup }}) d;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+    UPDATE {{ load_log }}
+    SET message = concat_ws('; ', nullif(message, ''),
+        format('{{ adso }}: активировано %s записей, новых %s, изменённых %s', v_rows, v_rows - v_changed, v_changed))
+    WHERE load_id = p_load_id;
+    RETURN v_rows;
+END;
+$$;
+COMMENT ON FUNCTION {{ fn }}(bigint) IS {{ comment | sql_literal }};
