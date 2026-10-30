@@ -120,15 +120,21 @@ def sidebar() -> Project | None:
         return None
     st.sidebar.markdown(f"**{project.config.name or project.root.name}**  \nсхемы `{project.config.schema_prefix}_*`")
     st.sidebar.markdown(f"Состав переноса: поток от **{project.config.scope_from or 'не задан'}**")
-    if st.sidebar.button("Проверить подключение"):
+    # Статус подключения проверяется при открытии и по кнопке, а не на каждое действие
+    recheck = st.sidebar.button("Проверить подключение")
+    if recheck or "db_status" not in st.session_state:
         try:
             info = check_connection(load_db_settings(_env_file()))
-            st.session_state["db_status"] = ("ok", info.version.split(" on ")[0])
+            st.session_state["db_status"] = ("ok", "База: " + info.version.split(" on ")[0], "")
         except DbError as e:
-            st.session_state["db_status"] = ("error", str(e))
-    status = st.session_state.get("db_status")
-    if status:
-        (st.sidebar.success if status[0] == "ok" else st.sidebar.error)(status[1])
+            st.session_state["db_status"] = ("error", "Нет подключения к базе", str(e))
+    status, text, detail = st.session_state["db_status"]
+    if status == "ok":
+        st.sidebar.success(text)
+    else:
+        st.sidebar.error(text)
+        with st.sidebar.expander("Что делать"):
+            st.write(detail)
     return project
 
 
@@ -409,7 +415,7 @@ def tab_deploy(project: Project, model: Model) -> None:
         confirm = st.checkbox("Подтверждаю пересоздание", disabled=not recreate) if recreate else True
         if st.button("Развернуть", type="primary", disabled=not confirm):
             try:
-                result = deploy(conn, package, recreate)
+                result = deploy(conn, package, recreate, out_dir=project.out_dir)
                 (st.success if result.ok else st.error)(
                     f"Развёрнуто, номер {result.deploy_id}" if result.ok else result.error)
             except DeployError as e:

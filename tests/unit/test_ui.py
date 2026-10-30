@@ -128,6 +128,7 @@ def test_app_renders_all_tabs_without_database(project_dir):
     assert at.sidebar.text_input[0].value == str(project_dir)
     assert "ZSD_A01" in [s.value for s in at.subheader]  # карточка первого объекта на вкладке «Схема»
     assert any("Объектов уровня 1" == m.label for m in at.metric)
+    assert at.sidebar.error[0].value == "Нет подключения к базе"
 
 
 def test_app_without_model_asks_for_import(project_dir):

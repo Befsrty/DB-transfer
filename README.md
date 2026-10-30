@@ -54,10 +54,11 @@ uv run dbtransfer run-demo
   Загрузок                 ZSALES_FF_load1.csv: 503 строк, ZSALES_FF_load2.csv: 100 строк
   Сверка ZSD_A01           совпало 550 из 550
   Сверка ZSD_A02           совпало 142 из 142
+  Время                    5.4 с
 Демо прошло: цифры совпали с эталоном
 ```
 
-Протоколы сверки лежат в `demo/out/reconcile_*.xlsx`, журналы — в схеме `dbt_meta` (смотреть в DBeaver).
+Всё, что сценарий создал, лежит в `demo/out/`: отчёты `import_check.xlsx` и `complexity.xlsx`, пакет `sql/`, журнал развёртывания `deploy_<номер>_<время>.csv`, протоколы сверки `reconcile_*.xlsx`. Те же журналы есть в схеме `dbt_meta` (смотреть в DBeaver). Число строк SQL зависит от диалекта: на обычном PostgreSQL их меньше, чем на Greengage.
 
 ## Как пользоваться
 
@@ -79,7 +80,7 @@ uv run dbtransfer load ZSALES_FF demo/data/ZSALES_FF_load1.csv     # плоск�
 uv run dbtransfer run 5                           # прогон загрузки 5 по составу переноса
 uv run dbtransfer rollback 5                      # откат ещё не прогнанной загрузки
 uv run dbtransfer reconcile ZSD_A02 demo/data/etalon_ZSD_A02.csv   # сверка, протокол в out/
-uv run dbtransfer init C:\work\my-bw            # новый проект для своей выгрузки
+uv run dbtransfer init C:\work\my-bw            # новый проект для своей выгрузки (см. «Свой проект»)
 uv run dbtransfer ui                              # веб-интерфейс на http://localhost:8501
 ```
 
@@ -118,7 +119,7 @@ ZSD_A02.0NETVAL_INV [dbt_mart.zsd_a02_active.netval_inv]
 
 ### Развёртывание, загрузка, прогон, сверка
 
-- `deploy` создаёт схемы, таблицы и функции одной транзакцией и пишет результат по каждому объекту в `dbt_meta.deploy_log`. Повторный запуск ничего не ломает. Если модель или правила изменились с прошлого развёртывания, а таблицы уже есть, `deploy` остановится и попросит `--recreate`: без пересоздания таблицы остались бы старыми. `--recreate` удаляет схемы с данными и журнал загрузок; журналы развёртываний и сверок остаются.
+- `deploy` создаёт схемы, таблицы и функции одной транзакцией и пишет результат по каждому объекту в `dbt_meta.deploy_log` и копию в `out/deploy_<номер>_<время>.csv`. Повторный запуск ничего не ломает. Если модель или правила изменились с прошлого развёртывания, а таблицы уже есть, `deploy` остановится и попросит `--recreate`: без пересоздания таблицы остались бы старыми. `--recreate` удаляет схемы с данными и журнал загрузок; журналы развёртываний и сверок остаются.
 - `load` грузит CSV в два шага: файл копируется в сырую таблицу `dbt_stg.<имя>_raw` (все колонки текстовые), затем запрос проверяет значения и переносит строки в рабочую таблицу. Десятичная запятая, даты `ГГГГММДД` и `ДД.ММ.ГГГГ`, пустая дата и `00000000` понимаются. Если хоть одно значение не приводится к типу, загрузка отменяется целиком и печатаются первые 20 ошибок с номером строки, полем и значением. Повторная загрузка того же файла требует `--force`.
 - `run` прогоняет загрузку DataSource по составу переноса (`scope_from` в `project.yaml`): трансформации и активации, одной транзакцией. Если в потоке есть заготовка с рутиной, прогон не начнётся. Загрузки прогоняются строго по возрастанию номера, повторный прогон отклоняется.
 - `reconcile` сверяет активные данные ADSO с эталоном по ключу и каждому показателю (допуск 0,01): «совпало», «расхождение», «нет в ADB», «нет в эталоне». Протокол — в Excel (`out/reconcile_<объект>_<время>.xlsx`) и в `dbt_meta.reconcile_result`. Если на верхнем слое есть расхождения, а рядом лежит эталон нижнего слоя (`etalon_ZSD_A01.csv`), сверяется и он. Колонки эталона называются по InfoObject; другое соответствие задаётся в `reconcile.yaml` проекта:
@@ -130,6 +131,25 @@ ZSD_A02:
 ```
 
 Команды работы с базой берут подключение из `.env` (другой файл — `--env-file`). Диалект SQL выбирается по серверу: Greengage/Greenplum или обычный PostgreSQL.
+
+## Свой проект
+
+Демо-проект `demo/` не трогай: его проверяют тесты. Для своей выгрузки создай отдельный проект:
+
+```
+uv run dbtransfer init C:\work\my-bw
+```
+
+Появятся `project.yaml`, папки `bw_export` и `data`. Префикс схем в базе берётся из имени папки (`my_bw_stg`, `my_bw_dwh`, …), чтобы не пересечься с демо-схемами `dbt_*`; поменять его можно в `project.yaml`.
+
+| Что | Куда | Имена файлов |
+|---|---|---|
+| Метаданные BW (структура хранилища), 21 таблица SE16 | `bw_export/` | По имени таблицы: `RSDIOBJ.csv`, `RSTRAN.csv`, … Список — `dbtransfer tables`, инструкция — [docs/bw-export.md](docs/bw-export.md) |
+| Справочники (для прогона данных) | `data/` | `md_<признак>_attr.csv`, `md_<признак>_text.csv`, например `md_0MATERIAL_attr.csv` |
+| Загрузки DataSource | `data/` | `<DataSource>_load<N>.csv`, например `ZSALES_FF_load1.csv` |
+| Эталоны из BW для сверки | `data/` | `etalon_<ADSO>.csv`, например `etalon_ZSD_A02.csv` |
+
+Дальше всё как с демо: `uv run dbtransfer ui -p C:\work\my-bw` (или впиши папку в поле «Папка проекта» слева) → «Импортировать» → «Схема», «Сложность», «SQL» → при желании «Развёртывание» и «Сверка». Метаданные нужны всегда, папка `data` — только если хочешь проверить перенос на данных. Первая строка файла данных — имена колонок: в загрузке это поля DataSource (`DOC_NUMBER`, `NETVAL`), в справочнике — признак и его атрибуты (`0MATERIAL;0MATL_GROUP`) или `LANGU;TXTSH;TXTLG` для текстов, в эталоне — InfoObject ADSO (`0SOLD_TO`, `0NETVAL_INV`). Разделитель `;`. Образцы — файлы в `demo/data/`.
 
 ## Известные ограничения
 
@@ -148,15 +168,15 @@ ZSD_A02:
 
 Python ставить отдельно не нужно: `uv sync` сам скачает Python 3.12.
 
-Нужно 16 ГБ оперативной памяти и 20–30 ГБ свободного места. Образ Greengage есть для x86-64 и Apple Silicon.
+Нужно 16 ГБ оперативной памяти и 20–30 ГБ свободного места. Проверено на Windows (x86-64, Docker Desktop с WSL2) и в CI на Linux. На Apple Silicon запуск образа Greengage не проверялся.
 
 ## Запуск
 
 ### Linux и macOS
 
 ```bash
-git clone https://github.com/befsrty/db-transfer.git
-cd db-transfer
+git clone https://github.com/Befsrty/DB-transfer.git
+cd DB-transfer
 cp .env.example .env
 docker compose up -d
 uv sync
@@ -168,8 +188,8 @@ uv run dbtransfer run-demo
 ### Windows (PowerShell)
 
 ```powershell
-git clone https://github.com/befsrty/db-transfer.git
-cd db-transfer
+git clone https://github.com/Befsrty/DB-transfer.git
+cd DB-transfer
 Copy-Item .env.example .env
 docker compose up -d
 uv sync
@@ -260,5 +280,9 @@ tests/
   unit/              без базы
   golden/sql/        эталонный пакет SQL демо-проекта
   integration/       с Greengage (pytest -m db)
-docs/                ТЗ и документация
+docs/                ТЗ, выгрузка SE16, сценарий демо, архитектура, протокол приёмки
+start-ui.bat         запуск базы и интерфейса двойным щелчком (Windows)
+make-shortcut.bat    ярлык DB-transfer на рабочий стол (Windows)
+docker-compose.yml   база Greengage
+.env.example         параметры подключения (скопировать в .env)
 ```

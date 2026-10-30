@@ -7,9 +7,12 @@
 
 from __future__ import annotations
 
+import csv
 import getpass
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 
 import psycopg
 
@@ -71,6 +74,7 @@ class DeployResult:
     ok: bool
     error: str = ""
     items: list[PlanItem] = field(default_factory=list)
+    log_file: Path | None = None  # копия журнала в out/
 
 
 def _exists(cur: psycopg.Cursor, obj: SqlObject) -> bool:
@@ -140,9 +144,24 @@ def _write_log(conn: psycopg.Connection, package: Package, plan: DeployPlan, use
     return deploy_id
 
 
+def save_log(result: DeployResult, out_dir: Path, now: datetime | None = None) -> Path:
+    """Копия журнала развёртывания в папке проекта (ФП-1.3): out/deploy_<номер>_<время>.csv."""
+    now = now or datetime.now()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"deploy_{result.deploy_id or 'failed'}_{now:%Y%m%d_%H%M%S}.csv"
+    with path.open("w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(["deploy_id", "model_hash", "object_name", "kind", "action", "status", "message", "deployed_at"])
+        for i in result.items:
+            w.writerow([result.deploy_id or "", result.plan.new_hash, i.obj.name, i.obj.kind, i.action, i.status,
+                        i.message, f"{now:%Y-%m-%d %H:%M:%S}"])
+    return path
+
+
 def deploy(conn: psycopg.Connection, package: Package, recreate: bool = False,
-           progress: Callable[[PlanItem], None] | None = None) -> DeployResult:
-    """Развернуть пакет. DeployError, если модель изменилась, а --recreate не задан (ФП-6.3)."""
+           progress: Callable[[PlanItem], None] | None = None, out_dir: Path | None = None) -> DeployResult:
+    """Развернуть пакет. DeployError, если модель изменилась, а --recreate не задан (ФП-6.3).
+    С out_dir журнал развёртывания сохраняется и в папку проекта (save_log)."""
     plan = make_plan(conn, package, recreate)
     if plan.blocked:
         names = ", ".join(i.obj.name for i in plan.kept_tables)
@@ -173,6 +192,9 @@ def deploy(conn: psycopg.Connection, package: Package, recreate: bool = False,
             failed.status, failed.message = "error", message
         deploy_id = _write_log(conn, package, plan, user)
         where = f" на объекте {failed.obj.name}" if failed else ""
-        return DeployResult(deploy_id, plan, False, f"ошибка{where}: {message}", plan.items)
-    deploy_id = _write_log(conn, package, plan, user)
-    return DeployResult(deploy_id, plan, True, "", plan.items)
+        result = DeployResult(deploy_id, plan, False, f"ошибка{where}: {message}", plan.items)
+    else:
+        result = DeployResult(_write_log(conn, package, plan, user), plan, True, "", plan.items)
+    if out_dir is not None:
+        result.log_file = save_log(result, out_dir)
+    return result

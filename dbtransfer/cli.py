@@ -76,12 +76,12 @@ def init_cmd(
     folder: Annotated[Path, typer.Argument(help="Папка нового проекта.")],
     name: Annotated[str | None, typer.Option(help="Название проекта.")] = None,
 ) -> None:
-    """Создать проект: project.yaml и папку bw_export для выгрузок."""
+    """Создать проект: project.yaml, папка bw_export для выгрузок и data для тестовых данных."""
     try:
         project = init_project(folder, name)
     except ProjectError as e:
         raise _fail(str(e)) from None
-    typer.echo(f"Проект создан: {project.config_path}")
+    typer.echo(f"Проект создан: {project.config_path}, схемы в базе: {project.config.schema_prefix}_*")
     typer.echo(f"Положите CSV-выгрузки BW в {project.bw_export_dir} (список таблиц: dbtransfer tables) "
                f"и выполните: dbtransfer import -p {folder}")
 
@@ -276,7 +276,7 @@ def deploy_cmd(
         package.write(proj.out_dir / "sql")
         typer.echo(f"Диалект: {package.dialect}, хеш пакета {package.sql_hash}")
         try:
-            result = deploy(conn, package, recreate)
+            result = deploy(conn, package, recreate, out_dir=proj.out_dir)
         except DeployError as e:
             raise _fail(str(e)) from None
     counts = result.plan.counts()
@@ -284,6 +284,8 @@ def deploy_cmd(
     for item in result.items:
         if item.action in ("create", "recreate") and item.obj.kind == "table":
             typer.echo(f"  {ACTION_TEXT[item.action]}: {item.obj.name}")
+    if result.log_file:
+        typer.echo(f"Журнал: {result.log_file}")
     if not result.ok:
         raise _fail(f"развёртывание отменено, {result.error}")
     typer.secho(f"Развёрнуто, номер развёртывания {result.deploy_id}", fg=typer.colors.GREEN)

@@ -35,7 +35,7 @@ CSV-выгрузки SE16 ──import──▶ Model (model.json) ──assess�
 | `generator/transform.py` | SQL трансформаций: правила, чтение атрибутов, время, фильтр DTP, заготовки для рутин | `TransformBuilder` |
 | `generator/package.py` | Сборка пакета по группам `010_schemas` … `070_transformations`, шаблоны Jinja2 в `templates/` | `generate(model, rules, dialect, scope) → Package` |
 | `db.py` | Подключение psycopg 3, проверка прав, выбор диалекта по версии сервера | `connect`, `check_connection`, `server_dialect` |
-| `deploy.py` | План (создать, оставить, заменить, пересоздать), выполнение одной транзакцией, журнал `deploy_log`, защита от развёртывания изменённой модели без пересоздания | `make_plan`, `deploy` |
+| `deploy.py` | План (создать, оставить, заменить, пересоздать), выполнение одной транзакцией, журнал `deploy_log` и его копия в `out/`, защита от развёртывания изменённой модели без пересоздания | `make_plan`, `deploy`, `save_log` |
 | `runtime.py` | Загрузка CSV через COPY в сырую таблицу, проверка значений в SQL, перенос во входную таблицу; прогон загрузки по составу переноса; откат | `load_file`, `run_load`, `rollback_load`, `flow_steps` |
 | `reconcile.py` | Сверка активных данных ADSO с эталоном по ключу и показателям, суммы, протокол Excel и `reconcile_result`, сверка нижнего слоя при расхождениях | `reconcile` |
 | `scenario.py` | Сквозной сценарий `run-demo` | `run_demo` |

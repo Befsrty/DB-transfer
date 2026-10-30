@@ -4,6 +4,7 @@ rem Окно не закрывать: пока оно открыто, интер
 chcp 65001 >nul
 cd /d "%~dp0"
 set UV_LINK_MODE=copy
+if not exist .env copy .env.example .env >nul
 title DB-transfer
 
 docker info >nul 2>&1
