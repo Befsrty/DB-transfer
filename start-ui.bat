@@ -15,7 +15,7 @@ if errorlevel 1 (
         timeout /t 5 /nobreak >nul
         docker info >nul 2>&1 && goto docker_ready
     )
-    echo Docker так и не запустился. Запусти Docker Desktop вручную и открой этот файл ещё раз.
+    echo Docker так и не запустился. Запустите Docker Desktop вручную и откройте этот файл ещё раз.
     pause
     exit /b 1
 )
@@ -34,7 +34,7 @@ for /l %%i in (1,1,40) do (
     uv run dbtransfer db check >nul 2>&1 && goto db_ready
     timeout /t 5 /nobreak >nul
 )
-echo База не ответила. Проверь: uv run dbtransfer db check
+echo База не ответила. Проверьте: uv run dbtransfer db check
 pause
 exit /b 1
 :db_ready
