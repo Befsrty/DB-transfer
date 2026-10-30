@@ -94,3 +94,13 @@ def test_db_commands_without_server(tmp_path, args, monkeypatch):
     project = str(_demo_project(tmp_path / "p"))
     result = runner.invoke(app, [*args, "-p", project, "--env-file", str(env)])
     assert result.exit_code == 2 and "нет подключения" in result.output
+
+
+def test_ui_starts_streamlit(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr("dbtransfer.cli.subprocess.call", lambda cmd: calls.append(cmd) or 0)
+    result = runner.invoke(app, ["ui", "-p", str(_demo_project(tmp_path)), "--port", "8600"])
+    assert result.exit_code == 0, result.output
+    cmd = calls[0]
+    assert cmd[1:4] == ["-m", "streamlit", "run"] and cmd[4].endswith("app.py")
+    assert "8600" in cmd and cmd[cmd.index("--project") + 1] == str(tmp_path)

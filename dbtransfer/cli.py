@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -16,7 +18,7 @@ from dbtransfer.config import load_bw_tables, load_db_settings
 from dbtransfer.db import DbError, check_connection, connect, server_dialect
 from dbtransfer.deploy import ACTION_TEXT, DeployError, deploy
 from dbtransfer.generator import DIALECTS, Package, RulesError, TypeRules, generate
-from dbtransfer.importers.bw_csv import ImportFailed, import_bw_export
+from dbtransfer.importers.bw_csv import SE16_HELP, ImportFailed, import_bw_export
 from dbtransfer.model import Model, Severity
 from dbtransfer.project import Project, ProjectError, find_project, init_project
 from dbtransfer.reconcile import STATUSES, ReconcileError, reconcile
@@ -27,17 +29,6 @@ from dbtransfer.scenario import ScenarioError, run_demo
 EXIT_DATA_ERROR = 1
 EXIT_ENV_ERROR = 2
 
-SE16_HELP = """\
-Как выгрузить таблицу через SE16:
-  1. Транзакция SE16 (или SE16N), введите имя таблицы.
-  2. Включите технические имена полей: Настройки → Параметры пользователя → «Имя поля».
-  3. В «Макс. число совпадений» оставьте пусто, чтобы выгрузить все строки. Для DD03L
-     ограничьте TABNAME таблицами ADSO и справочников (/BIC/A*, /BI0/P*, /BI0/T*, /BIC/P*, /BIC/T*).
-  4. Выполните (F8), затем Система → Список → Сохранить → Локальный файл,
-     формат «Электронная таблица» или «Текст с табуляцией».
-  5. Сохраните файл под именем таблицы: RSDIOBJ.csv или RSDIOBJ.txt, все файлы в одну папку.
-Кодировка (UTF-8 или Windows-1251) и разделитель (; , или табуляция) определяются автоматически.
-Подробнее: docs/bw-export.md"""
 
 app = typer.Typer(
     help="DB-transfer: перенос структуры хранилища SAP BW в Greenplum/Arenadata DB.",
@@ -85,12 +76,12 @@ def init_cmd(
     folder: Annotated[Path, typer.Argument(help="Папка нового проекта.")],
     name: Annotated[str | None, typer.Option(help="Название проекта.")] = None,
 ) -> None:
-    """Создать проект: project.yaml и папку bw_export для выгрузок."""
+    """Создать проект: project.yaml, папка bw_export для выгрузок и data для тестовых данных."""
     try:
         project = init_project(folder, name)
     except ProjectError as e:
         raise _fail(str(e)) from None
-    typer.echo(f"Проект создан: {project.config_path}")
+    typer.echo(f"Проект создан: {project.config_path}, схемы в базе: {project.config.schema_prefix}_*")
     typer.echo(f"Положите CSV-выгрузки BW в {project.bw_export_dir} (список таблиц: dbtransfer tables) "
                f"и выполните: dbtransfer import -p {folder}")
 
@@ -285,7 +276,7 @@ def deploy_cmd(
         package.write(proj.out_dir / "sql")
         typer.echo(f"Диалект: {package.dialect}, хеш пакета {package.sql_hash}")
         try:
-            result = deploy(conn, package, recreate)
+            result = deploy(conn, package, recreate, out_dir=proj.out_dir)
         except DeployError as e:
             raise _fail(str(e)) from None
     counts = result.plan.counts()
@@ -293,6 +284,8 @@ def deploy_cmd(
     for item in result.items:
         if item.action in ("create", "recreate") and item.obj.kind == "table":
             typer.echo(f"  {ACTION_TEXT[item.action]}: {item.obj.name}")
+    if result.log_file:
+        typer.echo(f"Журнал: {result.log_file}")
     if not result.ok:
         raise _fail(f"развёртывание отменено, {result.error}")
     typer.secho(f"Развёрнуто, номер развёртывания {result.deploy_id}", fg=typer.colors.GREEN)
@@ -413,6 +406,26 @@ def run_demo_cmd(
     if not s.ok:
         raise _fail("сверка нашла расхождения")
     typer.secho("Демо прошло: цифры совпали с эталоном", fg=typer.colors.GREEN)
+
+
+@app.command("ui")
+def ui_cmd(
+    project: ProjectOption = None,
+    env_file: EnvOption = Path(".env"),
+    port: Annotated[int, typer.Option("--port", help="Порт веб-интерфейса.")] = 8501,
+) -> None:
+    """Веб-интерфейс: схема потоков, карточки, сложность, SQL, развёртывание, сверка. Открывается в браузере."""
+    proj = _project(project)
+    app_file = Path(__file__).parent / "ui" / "app.py"
+    command = [sys.executable, "-m", "streamlit", "run", str(app_file), "--server.port", str(port),
+               "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal",
+               "--", "--project", str(proj.root), "--env-file", str(env_file.resolve())]
+    typer.echo(f"Веб-интерфейс: http://localhost:{port} (остановить: Ctrl+C)")
+    try:
+        code = subprocess.call(command)
+    except KeyboardInterrupt:
+        code = 0
+    raise typer.Exit(code)
 
 
 @db_app.command("check")

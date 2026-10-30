@@ -5,18 +5,25 @@ from conftest import DEMO
 
 from dbtransfer.importers.bw_csv import import_bw_export
 from dbtransfer.model import Model
-from dbtransfer.project import ProjectError, find_project, init_project, open_project
+from dbtransfer.project import ProjectError, find_project, init_project, open_project, schema_prefix_for
 
 
 def test_init_and_scope_keeps_comments(tmp_path):
     project = init_project(tmp_path / "p", name="Тест")
     assert project.config.name == "Тест" and (tmp_path / "p" / "bw_export").is_dir()
+    assert (tmp_path / "p" / "data").is_dir() and project.config.schema_prefix == "p"
     project.set_scope("ZSD_A02")
     text = project.config_path.read_text(encoding="utf-8")
     assert "scope_from: ZSD_A02" in text and "# Проект DB-transfer" in text
     assert open_project(tmp_path / "p").config.scope_from == "ZSD_A02"
     with pytest.raises(ProjectError):
         init_project(tmp_path / "p")
+
+
+@pytest.mark.parametrize(("folder", "prefix"), [("my-bw", "my_bw"), ("Проект", "proj"), ("dbt", "proj"),
+                                                ("2026 SAP", "p_2026_sap"), ("a" * 30, "a" * 20)])
+def test_schema_prefix_for(folder, prefix):
+    assert schema_prefix_for(folder) == prefix
 
 
 def test_find_project_option_and_errors(tmp_path, monkeypatch):

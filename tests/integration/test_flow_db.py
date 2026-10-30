@@ -171,6 +171,10 @@ def test_cli_run_demo(project, conn):
     assert "Нижний слой ZSD_A01: совпал" in result.output
     result = runner.invoke(app, ["deploy", *args])
     assert result.exit_code == 0, result.output
+    # ФП-1.3: копия журнала развёртывания в out/
+    logs = sorted(project.out_dir.glob("deploy_*.csv"))
+    assert len(logs) >= 2 and "Журнал:" in result.output
+    assert "object_name" in logs[-1].read_text(encoding="utf-8-sig").splitlines()[0]
     result = runner.invoke(app, ["load", "ZSALES_FF", str(DATA / "micro" / "ZSALES_FF_load1.csv"), *args])
     assert result.exit_code == 0 and "load_id:" in result.output
     load_id = result.output.strip().split("load_id: ")[-1]

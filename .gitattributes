@@ -2,3 +2,6 @@
 demo/bw_export/** -text
 demo/data/** -text
 tests/golden/** -text
+
+# Скрипты Windows: cmd требует CRLF
+*.bat text eol=crlf

@@ -19,8 +19,8 @@ TEMPLATE = """\
 # Проект DB-transfer (ТЗ, ФП-1.1). Пути относительно этого файла.
 name: {name}
 bw_version: BW/4HANA
-# Схемы в базе: <prefix>_stg, _md, _dwh, _mart, _meta
-schema_prefix: dbt
+# Схемы в базе: <prefix>_stg, _md, _dwh, _mart, _meta. У демо-проекта префикс dbt: свой, чтобы не пересечься
+schema_prefix: {prefix}
 # Папка с CSV-выгрузками таблиц BW (список таблиц: dbtransfer tables)
 bw_export: bw_export
 data: data
@@ -94,13 +94,25 @@ class Project:
         self.config.scope_from = obj
 
 
+def schema_prefix_for(folder_name: str) -> str:
+    """Префикс схем нового проекта из имени папки: латиница, цифры и «_», не длиннее 20 символов.
+    Совпасть с префиксом демо-проекта dbt он не может."""
+    prefix = re.sub(r"[^a-z0-9]+", "_", folder_name.lower()).strip("_")[:20].strip("_")
+    if not prefix or prefix == "dbt":
+        return "proj"
+    return prefix if prefix[0].isalpha() else f"p_{prefix}"[:20]
+
+
 def init_project(folder: Path, name: str | None = None) -> Project:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / PROJECT_FILE
     if path.exists():
         raise ProjectError(f"Проект уже существует: {path}")
-    path.write_text(TEMPLATE.format(name=name or folder.resolve().name), encoding="utf-8")
+    folder_name = folder.resolve().name
+    path.write_text(TEMPLATE.format(name=name or folder_name, prefix=schema_prefix_for(folder_name)),
+                    encoding="utf-8")
     (folder / "bw_export").mkdir(exist_ok=True)
+    (folder / "data").mkdir(exist_ok=True)
     return open_project(folder)
 
 

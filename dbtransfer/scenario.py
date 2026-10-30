@@ -76,7 +76,7 @@ def run_demo(project: Project, conn: psycopg.Connection, echo: Echo, dialect: st
 
     echo("4. Развёртывание с пересозданием")
     try:
-        result = deploy(conn, package, recreate=True)
+        result = deploy(conn, package, recreate=True, out_dir=project.out_dir)
     except DeployError as e:
         raise ScenarioError(f"развёртывание: {e}") from e
     if not result.ok:
