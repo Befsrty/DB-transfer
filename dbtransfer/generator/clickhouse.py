@@ -14,9 +14,9 @@ from __future__ import annotations
 import re
 
 from dbtransfer import naming
-from dbtransfer.generator.sql_functions import ClickHouseSql, ch_literal
 from dbtransfer.generator.package import SEQUENCES, Generator, Package
 from dbtransfer.generator.sql import ident, qualified
+from dbtransfer.generator.sql_functions import ClickHouseSql, ch_literal
 from dbtransfer.generator.tables import Column, TableDef
 from dbtransfer.generator.transform import TransformBuilder
 from dbtransfer.generator.types import RulesError, TypeRules, is_key_figure

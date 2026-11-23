@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from dbtransfer import naming
-from dbtransfer.generator.sql_functions import POSTGRES, SqlDialect
 from dbtransfer.generator.formula_sql import FormulaError, translate
 from dbtransfer.generator.sql import ident, literal, qualified
+from dbtransfer.generator.sql_functions import POSTGRES, SqlDialect
 from dbtransfer.generator.tables import TableBuilder, TableDef
 from dbtransfer.model import (
     Adso,

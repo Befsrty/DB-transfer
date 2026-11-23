@@ -67,3 +67,42 @@ jobs:
         run: PGPASSWORD=student psql -h localhost -U gpadmin -d demo -tAc "select version()"
       - name: Интеграционные тесты
         run: uv run pytest -m db -v
+
+  # Пакет ClickHouse (диалект clickhouse): DDL и пошаговые активация и трансформации на примере приложения Д.
+  # 24.8 и 25.8 — LTS-версии, которые предлагает Yandex Managed Service for ClickHouse (допущение: один хост).
+  clickhouse:
+    name: clickhouse ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["24.8", "25.8"]
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:${{ matrix.version }}
+        env:
+          CLICKHOUSE_PASSWORD: student
+        ports:
+          - 8123:8123
+    env:
+      DBT_CH_HOST: localhost
+      DBT_CH_PORT: "8123"
+      DBT_CH_USER: default
+      DBT_CH_PASSWORD: student
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Установка зависимостей
+        run: uv sync --locked
+      - name: Ожидание готовности ClickHouse
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf "http://localhost:8123/ping" >/dev/null; then echo "ClickHouse готов"; exit 0; fi
+            sleep 2
+          done
+          echo "ClickHouse не поднялся за 2 минуты"; exit 1
+      - name: Версия сервера
+        run: curl -s -u default:student "http://localhost:8123/?query=SELECT+version()"
+      - name: Интеграционные тесты ClickHouse
+        run: uv run pytest -m clickhouse -v
