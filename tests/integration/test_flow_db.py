@@ -183,3 +183,21 @@ def test_cli_run_demo(project, conn):
     assert result.exit_code == 0 and "удалено строк: 6" in result.output
     result = runner.invoke(app, ["run", load_id, *args])
     assert result.exit_code == 1 and "откачена" in result.output
+
+
+def test_currency_shift_internal_file(project, conn):
+    """Суммы во внутреннем формате BW: 10,00 JPY в файле — 1000 JPY в базе, 12,34 KWD — 1,234 KWD."""
+    (project.root / "type_rules.yaml").write_text(
+        "overrides:\n  ZSALES_FF:\n    currency_input: internal\n", encoding="utf-8")
+    model, rules, _ = setup(project, conn)
+    path = project.root / "jpy.csv"
+    path.write_text("DOC_NUMBER;S_ORD_ITEM;SOLD_TO;MATERIAL;CALDAY;NETVAL;DISCOUNT;CURRENCY;QTY;UNIT\n"
+                    "0009000001;000010;0000100001;MAT-0001;20261020;10,00;0,50;JPY;1,000;ST\n"
+                    "0009000001;000020;0000100001;MAT-0001;20261020;12,34;0,00;KWD;1,000;ST\n"
+                    "0009000001;000030;0000100001;MAT-0001;20261020;7,25;0,00;RUB;1,000;ST\n", encoding="utf-8")
+    res = load_file(conn, model, rules, "ZSALES_FF", path)
+    rows = conn.execute(f"SELECT currency, netval, discount FROM {PREFIX}_stg.zsales_ff WHERE load_id = %s "
+                        "ORDER BY s_ord_item", (res.load_id,)).fetchall()
+    conn.rollback()
+    assert [(c, float(n), float(d)) for c, n, d in rows] == [
+        ("JPY", 1000.0, 50.0), ("KWD", 1.234, 0.0), ("RUB", 7.25, 0.0)]

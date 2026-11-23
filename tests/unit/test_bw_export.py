@@ -35,7 +35,7 @@ def test_columns_follow_bw_tables_yaml(table):
         make_bw_export.ENCODING.get(table, "utf-8"))), delimiter=";"))
     assert header == list(spec.columns)
     for i, row in enumerate(rows, start=2):
-        if row[spec.version_column] != "A":
+        if spec.version_column and row[spec.version_column] != "A":
             continue
         # Первая колонка — имя объекта, она заполнена всегда
         first = next(iter(spec.columns))

@@ -161,7 +161,22 @@ def import_bw_export(folder: Path | str, language: str = "R", encoding: str | No
     _transformations(ctx)
     _dtps(ctx)
     _others(ctx)
+    _currencies(ctx)
     return model
+
+
+def _currencies(ctx: _Context) -> None:
+    """Знаки валют из TCURX. Строки с 2 знаками не нужны: так считаются все валюты, которых там нет."""
+    for r in ctx.rows("TCURX"):
+        code, raw = r["CURRKEY"].strip().upper(), r["CURRDEC"].strip()
+        if not code:
+            continue
+        if not raw.isdigit():
+            ctx.issue(Severity.WARNING, f"У валюты {code} число знаков «{raw}» не число: строка пропущена",
+                      "TCURX", r, code, skipped=True)
+            continue
+        if int(raw) != 2:
+            ctx.model.currency_decimals[code] = int(raw)
 
 
 def _collect_inactive(ctx: _Context) -> None:

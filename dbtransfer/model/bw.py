@@ -317,6 +317,8 @@ class Model(BaseModel):
     others: list[OtherObject] = Field(default_factory=list)
     # Таблицы реляционного источника, переносимые 1:1 (Oracle, MS SQL Server): «СХЕМА.ТАБЛИЦА» -> таблица
     tables: dict[str, DbTable] = Field(default_factory=dict)
+    # Знаки после запятой у валют из TCURX (только валюты, у которых не 2 знака): JPY -> 0, KWD -> 3
+    currency_decimals: dict[str, int] = Field(default_factory=dict)
     inactive: list[InactiveObject] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
     # Сведения о прочитанных файлах для отчёта о проверке: имя -> свойства
@@ -380,6 +382,8 @@ class Model(BaseModel):
                          "others": {"__all__": {"lines"}}}
         if not self.tables:
             exclude["tables"] = True
+        if not self.currency_decimals:
+            exclude["currency_decimals"] = True
         data = self.model_dump_json(exclude=exclude)
         return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
 

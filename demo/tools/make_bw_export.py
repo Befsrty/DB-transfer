@@ -83,6 +83,7 @@ ADSO_FLAGS = {
     "direct": ("", "", "", "X"),
 }
 # Какие таблицы BW генерирует для вида ADSO: 1 входящая, 2 активная, 3 журнал изменений
+CURRENCY_DECIMALS = [("JPY", 0), ("KRW", 0), ("KWD", 3)]
 ADSO_TABLES = {"staging": "1", "standard": "123", "cumulative": "12", "direct": "2"}
 
 # --- DataSource (приложение Б.2) ---
@@ -391,6 +392,8 @@ def build() -> dict[str, list[dict[str, str]]]:
         for chain, steps in PROCESS_CHAINS
         for tp, var in steps
     ]
+    # Валюты не с двумя знаками; в демо-потоке только RUB и EUR, суммы не пересчитываются
+    t["TCURX"] = [{"CURRKEY": cur, "CURRDEC": str(dec)} for cur, dec in CURRENCY_DECIMALS]
     return t
 
 

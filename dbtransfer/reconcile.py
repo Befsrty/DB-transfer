@@ -19,6 +19,7 @@ import yaml
 
 from dbtransfer import naming
 from dbtransfer.analysis.excel import _table, _title
+from dbtransfer.currency import SAP_DECIMALS, CurrencyRef, currency_ref, factor
 from dbtransfer.generator.sql import ident
 from dbtransfer.generator.tables import TableBuilder
 from dbtransfer.generator.types import TypeRules, is_key_figure
@@ -48,6 +49,8 @@ class Spec:
     ci_keys: list[str] = field(default_factory=list)  # ключи без учёта регистра (MS SQL *_CI_*)
     # Таблица 1:1: числовых колонок бывают десятки, сверяются те, что есть в эталоне (ключ обязателен)
     measures_from_etalon: bool = False
+    # Суммы CURR: показатель -> откуда его валюта (поле объекта или постоянная валюта)
+    amounts: dict[str, CurrencyRef] = field(default_factory=dict)
 
 
 @dataclass
@@ -95,9 +98,30 @@ def make_spec(model: Model, object_name: str) -> Spec:
         iobj = model.info_objects.get(m)
         if iobj and iobj.unit_info_object in names:
             units[m] = iobj.unit_info_object
+    amounts = {f.name: currency_ref(model, adso.fields, f) for f in adso.fields
+               if f.name in measures and f.datatype == "CURR"}
     return Spec(object_name, keys, measures, units,
                 {f.name: naming.column(f.name, f.info_object) for f in adso.fields},
-                {f.name: f.datatype for f in adso.fields}, naming.data_table(model, adso))
+                {f.name: f.datatype for f in adso.fields}, naming.data_table(model, adso),
+                amounts={m: r for m, r in amounts.items() if r.found})
+
+
+def convert_etalon(etalon: pd.DataFrame, spec: Spec, rules: TypeRules) -> pd.DataFrame:
+    """Суммы эталона в формате хранения базы (currency.etalon -> currency.store), по валюте строки."""
+    source, target = rules.etalon_format, rules.currency_store
+    if source == target or not spec.amounts:
+        return etalon
+    for m, ref in spec.amounts.items():
+        if ref.fixed:
+            codes = pd.Series(ref.fixed, index=etalon.index)
+        elif ref.field in etalon.columns:
+            codes = etalon[ref.field].astype(str).str.strip().str.upper()
+        else:
+            raise ReconcileError(f"В эталоне нет колонки валюты {ref.field} для суммы {m}: без неё сумму "
+                                 f"не пересчитать из формата {source} в {target} (currency.etalon в type_rules.yaml)")
+        factors = codes.map(lambda c: float(factor(rules.currency_decimals.get(c, SAP_DECIMALS), source, target)))
+        etalon[m] = etalon[m] * factors
+    return etalon
 
 
 def _text(value, datatype: str) -> str:
@@ -308,7 +332,9 @@ def reconcile(conn: psycopg.Connection, model: Model, object_name: str, etalon: 
     spec = make_spec(model, object_name)
     columns, default_tol = load_columns(project_dir, object_name)
     tol = default_tol if tolerance is None else tolerance
-    detail, totals = compare(read_etalon(etalon, spec, columns), read_actual(conn, model, spec), spec, tol)
+    rules = TypeRules.load(project_dir).bind(model)
+    expected = convert_etalon(read_etalon(etalon, spec, columns), spec, rules)
+    detail, totals = compare(expected, read_actual(conn, model, spec), spec, tol)
     result = ReconcileResult(object_name, etalon.name, detail, totals, spec)
     # ФП-8.4: при расхождении проверяем нижний слой, если рядом лежит его эталон
     if check_lower and not result.ok:

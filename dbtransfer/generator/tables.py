@@ -86,7 +86,7 @@ def iobj_field(iobj: InfoObject) -> FieldDef:
 class TableBuilder:
     def __init__(self, model: Model, rules: TypeRules, dialect: Dialect | None = None):
         self.model = model
-        self.rules = rules
+        self.rules = rules.bind(model)
         self.dialect = dialect or DIALECT_SPECS["greenplum"]
         self.warnings: list[str] = []
 
