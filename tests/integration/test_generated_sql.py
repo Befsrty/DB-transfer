@@ -1,6 +1,6 @@
 """Сгенерированный SQL в живой базе: развёртывание, повтор, прогон примера приложения Д (ПИ-18).
 
-Тесты работают и с Greengage (диалект greenplum), и с обычным PostgreSQL (диалект postgres):
+Тесты работают с Greengage 7 (диалект greenplum7), Greengage 6 (greenplum) и обычным PostgreSQL (postgres):
 диалект выбирается по версии сервера. Объекты создаются в отдельных схемах dbtest_*,
 демо-схемы dbt_* не трогаются. Запуск: uv run pytest -m db
 """
@@ -17,7 +17,7 @@ import pytest
 
 from dbtransfer import naming
 from dbtransfer.config import load_db_settings
-from dbtransfer.db import DbError, connect
+from dbtransfer.db import DbError, connect, server_dialect
 from dbtransfer.generator import TypeRules, generate
 from dbtransfer.model import Model
 
@@ -58,8 +58,7 @@ def conn(model):
     except DbError as e:
         pytest.skip(str(e))
     connection.autocommit = True
-    version = connection.execute("SELECT version()").fetchone()[0]
-    connection.dialect = "greenplum" if ("Greenplum" in version or "Greengage" in version) else "postgres"
+    connection.dialect = server_dialect(connection)
     connection.package = generate(model, TypeRules.load(), dialect=connection.dialect)
     _drop(connection)
     yield connection

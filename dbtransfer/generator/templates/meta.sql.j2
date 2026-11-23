@@ -1,3 +1,9 @@
+{% if if_not_exists %}
+-- Последовательности номеров: загрузки, развёртывания, сверки.
+{% for seq in sequences %}
+CREATE SEQUENCE IF NOT EXISTS {{ schema_sql }}.{{ seq }};
+{% endfor %}
+{% else %}
 -- Последовательности номеров: загрузки, развёртывания, сверки. В Greengage 6 нет CREATE SEQUENCE IF NOT EXISTS.
 DO $$
 BEGIN
@@ -9,3 +15,4 @@ BEGIN
 {% endfor %}
 END
 $$;
+{% endif %}

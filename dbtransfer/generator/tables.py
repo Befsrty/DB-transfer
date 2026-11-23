@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from dbtransfer import naming
+from dbtransfer.generator.dialects import DIALECT_SPECS, Dialect
 from dbtransfer.generator.sql import ident, qualified
 from dbtransfer.generator.types import RulesError, TypeRules, is_key_figure
 from dbtransfer.model import Adso, AdsoKind, DataSource, FieldDef, InfoObject, Model
@@ -77,16 +78,18 @@ def iobj_field(iobj: InfoObject) -> FieldDef:
 
 
 class TableBuilder:
-    def __init__(self, model: Model, rules: TypeRules):
+    def __init__(self, model: Model, rules: TypeRules, dialect: Dialect | None = None):
         self.model = model
         self.rules = rules
+        self.dialect = dialect or DIALECT_SPECS["greenplum"]
 
     def _apply_storage(self, table: TableDef, role: str, obj: str) -> None:
         table.storage = self.rules.storage_for(role, obj)
         table.storage_options = self.rules.storage_options.get(table.storage, "")
-        if table.storage != "heap" and table.primary_key:
+        if table.storage != "heap" and table.primary_key and self.dialect.mpp and not self.dialect.ao_primary_key:
             raise RulesError(f"type_rules.yaml: у {obj} таблица «{ROLE_TEXT.get(role, role)}» append-optimized, "
-                             "а у таких таблиц в Greenplum не может быть PRIMARY KEY. Оставьте для неё heap")
+                             "а у таких таблиц в Greenplum 6 не может быть PRIMARY KEY (в 7 может). "
+                             "Оставьте для неё heap или генерируйте для greenplum7")
 
     def _apply_distribution(self, table: TableDef, obj: str, default: list[str]) -> None:
         wanted = self.rules.distributed_by(obj)

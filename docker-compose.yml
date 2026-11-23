@@ -1,12 +1,17 @@
-# Целевая база прототипа: Greengage 6 (открытый форк Greenplum, ближе всего к Arenadata DB 6).
-#   Запуск:            docker compose up -d
-#   Остановка:         docker compose down
-#   Сброс базы целиком: docker compose down -v
+# Целевая база прототипа.
+#   Основная — Greengage 7.5 (открытое ядро Arenadata DB 7.5, PostgreSQL 12), диалект greenplum7:
+#     docker compose up -d
+#   Совместимость — Greengage 6.32 (ближе всего к ADB 6.x и Yandex MPP), диалект greenplum, порт 15433
+#   (DBT_DB_PORT_GG6), для работы приложения с ней в .env поставьте DBT_DB_PORT=15433:
+#     docker compose --profile gg6 up -d greengage6
+#   Остановка:         docker compose --profile gg6 down
+#   Сброс базы целиком: docker compose --profile gg6 down -v
 # Первый запуск инициализирует кластер, это занимает 1–3 минуты.
+# Диалект пакета SQL при deploy/run выбирается по версии сервера сам.
 services:
   greengage:
-    image: woblerr/greengage:6.32.0
-    container_name: dbtransfer-greengage
+    image: woblerr/greengage:7.5.1
+    container_name: dbtransfer-greengage7
     # Greenplum запоминает имя хоста в конфигурации кластера. Без фиксированного имени
     # пересозданный контейнер получает новое и не находит свои сегменты
     hostname: greengage
@@ -18,8 +23,25 @@ services:
       # Снаружи 15432, а не 5432: стандартный порт часто занят локальным PostgreSQL
       - "${DBT_DB_PORT:-15432}:5432"
     volumes:
+      # Каталог данных 7 несовместим с 6, поэтому у версий разные тома
+      - gg7_data:/data
+    restart: unless-stopped
+
+  greengage6:
+    profiles: [gg6]
+    image: woblerr/greengage:6.32.0
+    container_name: dbtransfer-greengage
+    hostname: greengage
+    environment:
+      GREENPLUM_PASSWORD: ${DBT_DB_PASSWORD:-student}
+      GREENPLUM_DATABASE_NAME: ${DBT_DB_NAME:-demo}
+      TZ: Europe/Moscow
+    ports:
+      - "${DBT_DB_PORT_GG6:-15433}:5432"
+    volumes:
       - gg_data:/data
     restart: unless-stopped
 
 volumes:
+  gg7_data:
   gg_data:
