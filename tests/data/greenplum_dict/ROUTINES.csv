@@ -1,0 +1,13 @@
+ROUTINE_SCHEMA,ROUTINE_NAME,ARGUMENTS,LANGUAGE,KIND,IS_TRIGGER,SOURCE
+sales,load_day,p_day date,plpgsql,f,N,"
+BEGIN
+  DELETE FROM sales.fact_sales WHERE sale_date = p_day;
+  INSERT INTO sales.fact_sales SELECT * FROM sales.orders;
+END;
+"
+sales,load_day,,plpgsql,f,N,"
+BEGIN
+  PERFORM sales.load_day(current_date);
+END;
+"
+sales,median,numeric,sql,a,N,

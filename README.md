@@ -2,7 +2,7 @@
 
 DB-transfer переносит структуру хранилища данных SAP BW в Greenplum-совместимую СУБД (основная цель — Arenadata DB 7.5 / Greengage 7; ADB 6.x, Greengage 6, Greenplum 6 и Yandex MPP — режим совместимости) и проверяет, что после переноса отчёты получают те же цифры.
 
-На вход подаются CSV-выгрузки таблиц метаданных BW, сделанные транзакцией SE16, или словарь Oracle / MS SQL Server (CSV-выгрузка запросов к `ALL_*` и `INFORMATION_SCHEMA` либо прямое подключение, см. [docs/rdbms-import.md](docs/rdbms-import.md)). По ним приложение:
+На вход подаются CSV-выгрузки таблиц метаданных BW, сделанные транзакцией SE16, или словарь Oracle / MS SQL Server (CSV-выгрузка запросов к `ALL_*` и `INFORMATION_SCHEMA` либо прямое подключение, см. [docs/rdbms-import.md](docs/rdbms-import.md)), или каталог Greenplum 6/7, Yandex MPP и Cloudberry (перенос 1:1 с распределением, AO и секциями, перенос данных и сверка источника с целью, см. [docs/greenplum.md](docs/greenplum.md)). По ним приложение:
 
 - строит модель хранилища: InfoObject, ADSO, DataSource, трансформации с правилами и рутинами, DTP;
 - оценивает, какая часть объектов переносится автоматически, а какая требует ручной работы, и считает трудоёмкость по нормам;
@@ -112,6 +112,8 @@ uv run dbtransfer ui
 uv run dbtransfer tables                          # какие таблицы BW выгрузить и как (подробно: docs/bw-export.md)
 uv run dbtransfer tables --source oracle          # запросы к словарю Oracle (или --source mssql)
 uv run dbtransfer import <папка> --source oracle  # модель по словарю Oracle, таблицы 1:1 с секциями (docs/rdbms-import.md)
+uv run dbtransfer import --source greenplum --url greenplum://user@host:5432/dwh  # каталог Greenplum (docs/greenplum.md)
+uv run dbtransfer transfer --url greenplum://user@host:5432/dwh  # данные Greenplum -> цель и сверка строк и сумм
 uv run dbtransfer import                          # импорт demo/bw_export -> demo/model.json, demo/out/import_check.xlsx
 uv run dbtransfer report                          # отчёт о сложности -> demo/out/complexity.xlsx
 uv run dbtransfer scope --from ZSD_A02            # состав переноса: поток от ZSD_A02 вниз до источников
@@ -211,6 +213,7 @@ uv run dbtransfer init C:\work\my-bw
 |---|---|
 | `dbtransfer/rules/bw_tables.yaml` | Состав таблиц BW, их колонки и ключи |
 | `dbtransfer/rules/oracle_dict.yaml`, `mssql_dict.yaml` | Состав представлений словаря Oracle и MS SQL Server |
+| `dbtransfer/rules/greenplum_dict.yaml` | Состав запросов к каталогу Greenplum |
 | `dbtransfer/rules/type_rules.yaml` | Перевод типов ABAP, хранение и ключи распределения. Одноимённый файл рядом с `project.yaml` переопределяет правила для проекта, раздел `overrides` — для отдельного объекта |
 | `dbtransfer/rules/naming.yaml` | Имена схем и таблиц в целевой базе |
 | `dbtransfer/rules/effort_norms.yaml` | Нормы трудоёмкости ручной работы |
@@ -287,12 +290,13 @@ uv run python demo/tools/make_demo_data.py   # данные и эталоны ->
 dbtransfer/          пакет приложения
   rules/             bw_tables.yaml, naming.yaml, effort_norms.yaml, type_rules.yaml
   model/             модель метаданных (pydantic), сохраняется в model.json
-  importers/         импорт CSV-выгрузок SE16, словаря Oracle и MS SQL Server
+  importers/         импорт CSV-выгрузок SE16, словаря Oracle и MS SQL Server, каталога Greenplum
   analysis/          граф и состав переноса, уровни и трудоёмкость, Excel-отчёты, lineage
   generator/         генерация SQL: типы, формулы, таблицы, активация, трансформации, шаблоны Jinja2
   deploy.py          развёртывание пакета и журнал deploy_log
   runtime.py         загрузка CSV, прогон, откат
   reconcile.py       сверка с эталоном и протокол
+  transfer.py        перенос данных из Greenplum и сверка строк и сумм источника с целью
   scenario.py        сквозной сценарий run-demo
   project.py         проект: project.yaml, model.json, out/
   config.py          правила и подключение из .env
@@ -306,7 +310,7 @@ demo/
   project.yaml       демо-проект
 tests/
   unit/              без базы
-  data/              синтетические словари Oracle и MS SQL Server и данные к ним
+  data/              синтетические словари Oracle, MS SQL Server, каталог Greenplum 6 и данные к ним
   golden/sql/        эталонный пакет SQL демо-проекта
   integration/       с Greengage (pytest -m db)
 docs/                ТЗ, выгрузка SE16, сценарий демонстрации, архитектура, протокол приёмки
@@ -323,6 +327,7 @@ docker-compose.yml   база Greengage
 | [docs/tz-prototype.md](docs/tz-prototype.md) | Техническое задание на прототип |
 | [docs/bw-export.md](docs/bw-export.md) | Какие таблицы BW выгружать и как |
 | [docs/rdbms-import.md](docs/rdbms-import.md) | Импорт из Oracle и MS SQL Server: выгрузка словаря, перевод типов, допущения |
+| [docs/greenplum.md](docs/greenplum.md) | Импорт из Greenplum 6/7, Yandex MPP, Cloudberry: что переносится как есть, перенос данных, сверка |
 | [docs/architecture.md](docs/architecture.md) | Устройство приложения, добавление источника и целевой СУБД |
 | [docs/demo-script.md](docs/demo-script.md) | Сценарий демонстрации на 5–7 минут |
 | [docs/acceptance.md](docs/acceptance.md) | Протокол приёмочных испытаний |

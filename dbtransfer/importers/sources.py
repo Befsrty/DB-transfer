@@ -1,4 +1,4 @@
-"""Выбор источника модели: выгрузки SAP BW или словарь Oracle / MS SQL Server.
+"""Выбор источника модели: выгрузки SAP BW, словарь Oracle / MS SQL Server или каталог Greenplum.
 
 Командная строка и интерфейс вызывают import_model и export_help, не зная устройства импортёров.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from dbtransfer.importers import mssql_dict, oracle_dict
+from dbtransfer.importers import greenplum, mssql_dict, oracle_dict
 from dbtransfer.importers.bw_csv import SE16_HELP, ImportFailed, import_bw_export
 from dbtransfer.model import Model, SourceKind
 
@@ -17,8 +17,12 @@ SOURCES = {
     "bw": (SourceKind.SAP_BW, "SAP BW: CSV-выгрузки SE16"),
     "oracle": (SourceKind.ORACLE, "Oracle: словарь ALL_*"),
     "mssql": (SourceKind.MSSQL, "MS SQL Server: INFORMATION_SCHEMA и sys.*"),
+    "greenplum": (SourceKind.GREENPLUM, "Greenplum: pg_catalog и gp_distribution_policy (Greenplum 6/7, "
+                                        "Yandex MPP, Cloudberry)"),
 }
-CONNECTORS = {"oracle": oracle_dict.connect, "mssql": mssql_dict.connect}
+CONNECTORS = {"oracle": oracle_dict.connect, "mssql": mssql_dict.connect, "greenplum": greenplum.connect}
+IMPORTERS = {SourceKind.ORACLE: oracle_dict.import_oracle_dict, SourceKind.MSSQL: mssql_dict.import_mssql_dict,
+             SourceKind.GREENPLUM: greenplum.import_greenplum}
 
 
 def source_kind(source: str) -> SourceKind:
@@ -34,6 +38,8 @@ def export_help(source: str) -> str:
         return oracle_dict.help_text()
     if kind == SourceKind.MSSQL:
         return mssql_dict.help_text()
+    if kind == SourceKind.GREENPLUM:
+        return greenplum.help_text()
     return SE16_HELP
 
 
@@ -41,13 +47,13 @@ def import_model(source: str, folder: Path | str | None = None, *, url: str | No
                  password: str | None = None, schemas: Iterable[str] | None = None, system: str | None = None,
                  encoding: str | None = None, delimiter: str | None = None, language: str = "R",
                  target: str = "table") -> Model:
-    """Построить модель: из папки выгрузок или, для Oracle и MS SQL Server, по подключению url."""
+    """Построить модель: из папки выгрузок или, для Oracle, MS SQL Server и Greenplum, по подключению url."""
     kind = source_kind(source)
     if kind == SourceKind.SAP_BW:
         if url:
             raise ImportFailed("Подключение напрямую к SAP BW не поддерживается: выгрузите таблицы через SE16")
         return import_bw_export(folder, language=language, encoding=encoding, delimiter=delimiter)
-    importer = oracle_dict.import_oracle_dict if kind == SourceKind.ORACLE else mssql_dict.import_mssql_dict
+    importer = IMPORTERS[kind]
     extra = {"system": system.upper(), "target": target} if system else {"target": target}
     if url:
         try:

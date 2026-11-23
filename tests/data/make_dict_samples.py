@@ -1,4 +1,5 @@
-"""Синтетические выгрузки словаря Oracle и MS SQL Server для тестов (tests/data/oracle_dict, mssql_dict).
+"""Синтетические выгрузки словаря Oracle, MS SQL Server и каталога Greenplum 6 для тестов
+(tests/data/oracle_dict, mssql_dict, greenplum_dict).
 
 Запуск: uv run python tests/data/make_dict_samples.py — файлы перезаписываются.
 """
@@ -224,6 +225,92 @@ def mssql() -> None:
     ])
 
 
+def greenplum() -> None:
+    """Каталог Greenplum 6 (Yandex MPP 6.x) в том виде, в каком его возвращают запросы greenplum.queries(6)."""
+    d = HERE / "greenplum_dict"
+    write(d, "VERSION", ["VERSION", "VERSION_NUM", "DATABASE"], [
+        ["PostgreSQL 9.4.26 (Greenplum Database 6.28.1 build commit:abc) on x86_64-unknown-linux-gnu", "90426",
+         "dwh"],
+    ])
+    write(d, "TABLES", ["TABLE_SCHEMA", "TABLE_NAME", "STORAGE", "RELOPTIONS", "HAS_OIDS", "COMMENT", "ROW_ESTIMATE"], [
+        ["sales", "orders", "heap", "", "N", "Заказы", "150000"],
+        ["sales", "order_lines", "ao_column",
+         "appendonly=true, orientation=column, compresstype=quicklz, compresslevel=1", "N", "", "4800000"],
+        ["sales", "fact_sales", "ao_row", "appendonly=true, compresstype=zstd, compresslevel=5", "N",
+         "Продажи по дням", "9000000"],
+        ["sales", "regions", "heap", "fillfactor=90", "Y", "Справочник регионов", "80"],
+        ["sales", "ext_orders", "external", "", "N", "", "0"],
+        ["pg_catalog", "pg_class", "heap", "", "N", "", "0"],
+    ])
+    cols = [
+        # схема, таблица, колонка, позиция, format_type, NOT NULL, значение по умолчанию, схема типа, комментарий
+        ["sales", "orders", "order_id", 1, "bigint", "Y", "nextval('sales.orders_order_id_seq'::regclass)",
+         "pg_catalog", "Номер заказа"],
+        ["sales", "orders", "region", 2, "character(2)", "N", "", "pg_catalog", ""],
+        ["sales", "orders", "amount", 3, "numeric(15,2)", "N", "", "pg_catalog", ""],
+        ["sales", "orders", "created", 4, "timestamp(3) without time zone", "N", "", "pg_catalog", ""],
+        ["sales", "orders", "attrs", 5, "jsonb", "N", "", "pg_catalog", ""],
+        ["sales", "orders", "status", 6, "sales.order_status", "N", "", "sales", ""],
+        ["sales", "orders", "valid_until", 7, "abstime", "N", "", "pg_catalog", ""],
+        ["sales", "order_lines", "order_id", 1, "bigint", "Y", "", "pg_catalog", ""],
+        ["sales", "order_lines", "line_no", 2, "integer", "Y", "", "pg_catalog", ""],
+        ["sales", "order_lines", "price", 3, "double precision", "N", "", "pg_catalog", ""],
+        ["sales", "order_lines", "tags", 4, "text[]", "N", "", "pg_catalog", ""],
+        ["sales", "fact_sales", "sale_date", 1, "date", "Y", "", "pg_catalog", ""],
+        ["sales", "fact_sales", "region", 2, "character(2)", "Y", "", "pg_catalog", ""],
+        ["sales", "fact_sales", "qty", 3, "integer", "N", "", "pg_catalog", ""],
+        ["sales", "fact_sales", "amount", 4, "numeric(18,2)", "N", "", "pg_catalog", ""],
+        ["sales", "regions", "code", 1, "character(2)", "Y", "", "pg_catalog", ""],
+        ["sales", "regions", "name", 2, "character varying(100)", "Y", "", "pg_catalog", ""],
+        ["sales", "ext_orders", "line", 1, "text", "N", "", "pg_catalog", ""],
+    ]
+    write(d, "COLUMNS", ["TABLE_SCHEMA", "TABLE_NAME", "COLUMN_NAME", "POSITION", "DATA_TYPE", "NOT_NULL",
+                         "COLUMN_DEFAULT", "TYPE_SCHEMA", "COMMENT"], cols)
+    write(d, "CONSTRAINTS", ["TABLE_SCHEMA", "TABLE_NAME", "CONSTRAINT_NAME", "CONSTRAINT_TYPE", "COLUMNS",
+                             "REF_TABLE", "DEFINITION"], [
+        ["sales", "orders", "orders_pkey", "p", "order_id", "", "PRIMARY KEY (order_id)"],
+        ["sales", "regions", "regions_pkey", "p", "code", "", "PRIMARY KEY (code)"],
+        ["sales", "orders", "orders_region_fkey", "f", "region", "sales.regions",
+         "FOREIGN KEY (region) REFERENCES sales.regions(code)"],
+        ["sales", "fact_sales", "fact_sales_qty_check", "c", "qty", "", "CHECK (qty >= 0)"],
+    ])
+    write(d, "DISTRIBUTION", ["TABLE_SCHEMA", "TABLE_NAME", "DISTRIBUTED_BY"], [
+        ["sales", "orders", "DISTRIBUTED BY (order_id)"],
+        ["sales", "order_lines", "DISTRIBUTED BY (order_id cdbhash_int8_ops)"],
+        ["sales", "fact_sales", "DISTRIBUTED RANDOMLY"],
+        ["sales", "regions", "DISTRIBUTED REPLICATED"],
+    ])
+    header = ["TABLE_SCHEMA", "TABLE_NAME", "PARTITION_NAME", "PARTITION_TABLE", "LEVEL", "POSITION", "KIND",
+              "KEY_COLUMNS", "IS_DEFAULT", "LIST_VALUES", "RANGE_START", "START_INCLUSIVE", "RANGE_END",
+              "END_INCLUSIVE", "BOUND", "SUBPARTITIONED"]
+    write(d, "PARTITIONS", header, [
+        # START … END … EVERY: безымянные секции, имя — из таблицы-наследника; есть разрыв 2025-01 … 2025-07
+        ["sales", "fact_sales", "", "fact_sales_1_prt_2", 0, 1, "range", "sale_date", "N", "",
+         "'2024-01-01'::date", "Y", "'2024-07-01'::date", "N", "", "N"],
+        ["sales", "fact_sales", "", "fact_sales_1_prt_3", 0, 2, "range", "sale_date", "N", "",
+         "'2024-07-01'::date", "Y", "'2025-01-01'::date", "N", "", "N"],
+        ["sales", "fact_sales", "h2025", "fact_sales_1_prt_h2025", 0, 3, "range", "sale_date", "N", "",
+         "'2025-07-01'::date", "Y", "'2026-01-01'::date", "N", "", "N"],
+        ["sales", "fact_sales", "other", "fact_sales_1_prt_other", 0, 4, "range", "sale_date", "Y", "",
+         "", "N", "", "N", "", "N"],
+        ["sales", "fact_sales", "ru", "fact_sales_1_prt_2_2_prt_ru", 1, 1, "list", "region", "N", "'RU'::bpchar",
+         "", "N", "", "N", "", "N"],
+    ])
+    write(d, "VIEWS", ["TABLE_SCHEMA", "TABLE_NAME", "KIND", "VIEW_DEFINITION"], [
+        ["sales", "v_daily", "v", " SELECT fact_sales.sale_date, sum(fact_sales.amount) AS amount\n"
+         "   FROM sales.fact_sales\n  GROUP BY fact_sales.sale_date;"],
+    ])
+    write(d, "ROUTINES", ["ROUTINE_SCHEMA", "ROUTINE_NAME", "ARGUMENTS", "LANGUAGE", "KIND", "IS_TRIGGER",
+                          "SOURCE"], [
+        ["sales", "load_day", "p_day date", "plpgsql", "f", "N",
+         "\nBEGIN\n  DELETE FROM sales.fact_sales WHERE sale_date = p_day;\n"
+         "  INSERT INTO sales.fact_sales SELECT * FROM sales.orders;\nEND;\n"],
+        ["sales", "load_day", "", "plpgsql", "f", "N", "\nBEGIN\n  PERFORM sales.load_day(current_date);\nEND;\n"],
+        ["sales", "median", "numeric", "sql", "a", "N", ""],
+    ])
+
+
 if __name__ == "__main__":
     oracle()
     mssql()
+    greenplum()

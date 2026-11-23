@@ -17,3 +17,9 @@ view: 2                      # представление: SQL переписы�
 view_per_50_lines: 1         # плюс за каждые начатые 50 строк текста
 db_routine: 4                # процедура, функция, пакет, триггер
 db_routine_per_50_lines: 2   # плюс за каждые начатые 50 строк кода
+external_table: 1             # внешняя таблица Greenplum: заново указать адрес gpfdist / PXF / s3
+# Источник той же семьи (Greenplum, Yandex MPP, Cloudberry): перевода нет, только проверка на целевой версии
+view_same_family: 0.5
+view_same_family_per_50_lines: 0.25
+db_routine_same_family: 1
+db_routine_same_family_per_50_lines: 0.5

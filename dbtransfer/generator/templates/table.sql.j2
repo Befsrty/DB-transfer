@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS {{ t.qname }} (
 
 {{ storage }}{% endif %}
 
-{% if t.distributed_by %}DISTRIBUTED BY ({{ t.distributed_by | join(", ") }}){% else %}DISTRIBUTED RANDOMLY{% endif %}{% if t.partition_sql %}
+{% if t.replicated %}DISTRIBUTED REPLICATED{% elif t.distributed_by %}DISTRIBUTED BY ({{ t.distributed_by | join(", ") }}){% else %}DISTRIBUTED RANDOMLY{% endif %}{% if t.partition_sql %}
 
 {{ t.partition_sql }}{% endif %}{% elif t.partition_sql %}
 

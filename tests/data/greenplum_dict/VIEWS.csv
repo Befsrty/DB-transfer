@@ -1,0 +1,4 @@
+TABLE_SCHEMA,TABLE_NAME,KIND,VIEW_DEFINITION
+sales,v_daily,v," SELECT fact_sales.sale_date, sum(fact_sales.amount) AS amount
+   FROM sales.fact_sales
+  GROUP BY fact_sales.sale_date;"

@@ -23,6 +23,7 @@ from dbtransfer.model import (
     RoutineKind,
     RuleKind,
     Severity,
+    SourceKind,
     Transformation,
 )
 
@@ -55,6 +56,17 @@ OTHER = {
     ObjectType.VIEW: ("Представление", 2, "SQL представления переписывается под Greenplum вручную", "view"),
     ObjectType.DB_ROUTINE: ("Процедура, функция, триггер", 3, "код PL/SQL или T-SQL переносится вручную",
                             "db_routine"),
+    ObjectType.EXTERNAL_TABLE: ("Внешняя таблица", 2, "внешняя таблица (gpfdist, PXF, s3) создаётся вручную: "
+                                "адреса и серверы источника в новой среде другие", "external_table"),
+}
+# Источник той же семьи (Greenplum, Yandex MPP, Cloudberry): код и представления на том же языке, перевода нет,
+# остаётся проверка на целевой версии (Greenplum 6 — PostgreSQL 9.4, Greengage 7 и ADB 7 — PostgreSQL 12)
+OTHER_SAME_FAMILY = {
+    ObjectType.VIEW: ("Представление", 1, "SQL переносится как есть после таблиц; проверить на целевой версии",
+                      "view_same_family"),
+    ObjectType.DB_ROUTINE: ("Процедура, функция, триггер", 2,
+                            "код на том же языке (PL/pgSQL, SQL) переносится без перевода, проверяется "
+                            "на целевой версии (6 → 7: PostgreSQL 9.4 → 12)", "db_routine_same_family"),
 }
 # Подписи для моделей из словаря Oracle и MS SQL Server: ADSO — целевая таблица, DataSource — входная
 TABLE_LABELS = {AdsoKind.STANDARD: "Таблица", AdsoKind.STAGING: "Таблица без ключа"}
@@ -63,6 +75,7 @@ SOURCE_TABLE_LABEL = "Входная таблица"
 TYPE_ORDER = [*IOBJ_LABELS.values(), *ADSO_LABELS.values(), "DataSource", "Трансформация", "DTP",
               "CompositeProvider", "BEx-запрос", "Иерархия", "Цепочка процессов", "Классический DSO",
               *TABLE_LABELS.values(), SOURCE_TABLE_LABEL, "Представление", "Процедура, функция, триггер",
+              "Внешняя таблица",
               "Не разобрано"]
 
 
@@ -202,7 +215,9 @@ def assess(model: Model) -> Report:
         objects.append(Assessment(type="DTP", name=d.name, level=1, reasons=[f"{mode} загрузка"],
                                   description=f"{d.source.name} → {d.target.name}"))
     for o in sorted(model.others, key=lambda o: (o.type.value, o.name)):
-        label, level, reason, norm = OTHER.get(o.type, (o.type.value, 3, "прочий объект", "unparsed_object"))
+        known = OTHER_SAME_FAMILY if model.source_kind == SourceKind.GREENPLUM and o.type in OTHER_SAME_FAMILY \
+            else OTHER
+        label, level, reason, norm = known.get(o.type, (o.type.value, 3, "прочий объект", "unparsed_object"))
         hours = norms[norm]
         if o.lines and f"{norm}_per_50_lines" in norms:
             hours += norms[f"{norm}_per_50_lines"] * math.ceil(o.lines / 50)

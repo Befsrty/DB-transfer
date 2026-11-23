@@ -68,6 +68,62 @@ jobs:
       - name: Интеграционные тесты
         run: uv run pytest -m db -v
 
+  # Сквозной перенос Greenplum 6 -> Greengage 7: каталог источника (pg_catalog, gp_distribution_policy, pg_partitions),
+  # DDL с распределением, AO и секциями, данные, сверка числа строк и сумм. Источник — Greengage 6.32 (ядро
+  # Greenplum 6, как у Yandex MPP 6.x; публичного образа Greenplum нет), цель — Greengage 7.5.1 (ADB 7.5).
+  greenplum-transfer:
+    name: greenplum 6.32 -> greengage 7.5.1
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      target:
+        image: woblerr/greengage:7.5.1
+        options: --hostname greengage
+        env:
+          GREENPLUM_PASSWORD: student
+          GREENPLUM_DATABASE_NAME: demo
+        ports:
+          - 5432:5432
+      source:
+        image: woblerr/greengage:6.32.0
+        options: --hostname greengage
+        env:
+          GREENPLUM_PASSWORD: student
+          GREENPLUM_DATABASE_NAME: dwh
+        ports:
+          - 5433:5432
+    env:
+      DBT_DB_HOST: localhost
+      DBT_DB_PORT: "5432"
+      DBT_DB_NAME: demo
+      DBT_DB_USER: gpadmin
+      DBT_DB_PASSWORD: student
+      DBT_GP_SRC_URL: greenplum://gpadmin:student@localhost:5433/dwh
+      DBT_EXPECT_SOURCE_MAJOR: "6"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Установка зависимостей
+        run: uv sync --locked
+      - name: Ожидание готовности источника и цели
+        run: |
+          for port in 5432 5433; do
+            db=$([ "$port" = 5432 ] && echo demo || echo dwh)
+            for i in $(seq 1 60); do
+              if PGPASSWORD=student psql -h localhost -p $port -U gpadmin -d $db -tAc "select 1" >/dev/null 2>&1; then
+                echo "порт $port готов"; break
+              fi
+              if [ "$i" = 60 ]; then echo "порт $port не поднялся за 5 минут"; exit 1; fi
+              sleep 5
+            done
+          done
+      - name: Версии
+        run: |
+          PGPASSWORD=student psql -h localhost -p 5433 -U gpadmin -d dwh -tAc "select version()"
+          PGPASSWORD=student psql -h localhost -p 5432 -U gpadmin -d demo -tAc "select version()"
+      - name: Сквозной перенос и сверка
+        run: uv run pytest -m db -v tests/integration/test_greenplum_db.py
+
   # Пакет ClickHouse (диалект clickhouse): DDL и пошаговые активация и трансформации на примере приложения Д.
   # 24.8 и 25.8 — LTS-версии, которые предлагает Yandex Managed Service for ClickHouse (допущение: один хост).
   clickhouse:

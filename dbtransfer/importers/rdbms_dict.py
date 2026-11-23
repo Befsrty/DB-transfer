@@ -70,6 +70,7 @@ class SourceColumn:
     known: bool = True  # тип распознан; иначе колонка переносится как text
     caveat: str = ""  # чем перенос типа отличается от источника (⚠ в справочнике типов)
     lossy: bool = False  # значения меняются при переносе (точность, часовой пояс) — предупреждение, а не сведение
+    target_type: str = ""  # тип целевой базы как есть (источник Greenplum), см. FieldDef.target_type
 
 
 @dataclass
@@ -84,6 +85,11 @@ class SourceTable:
     notes: list[str] = field(default_factory=list)  # сведения для замечаний импорта
     partitioning: Partitioning | None = None
     ci_columns: list[str] = field(default_factory=list)  # текстовые колонки с регистронезависимой сортировкой
+    # Источник Greenplum: распределение (HASH, RANDOM, REPLICATED) и хранение как есть, см. DbTable
+    distribution: str = ""
+    distributed_by: list[str] = field(default_factory=list)
+    storage: str = ""
+    storage_options: str = ""
 
     @property
     def full_name(self) -> str:
@@ -253,7 +259,8 @@ def _check_names(model: Model, t: SourceTable, mode: str) -> None:
 def _field(c: SourceColumn, is_key: bool) -> FieldDef:
     comment = c.native_type + (f". {c.comment}" if c.comment else "")
     return FieldDef(name=c.name, position=c.position, bw_column=c.name, datatype=c.datatype, length=c.length,
-                    decimals=c.decimals, is_key=is_key, nullable=c.nullable and not is_key, comment=comment)
+                    decimals=c.decimals, is_key=is_key, nullable=c.nullable and not is_key, comment=comment,
+                    target_type=c.target_type)
 
 
 # Режимы переноса таблиц реляционного источника
@@ -321,11 +328,16 @@ def _add_table(model: Model, t: SourceTable, system: str, source_type: str, mode
         model.tables[t.full_name] = DbTable(
             schema_name=t.schema, name=t.name, description=t.comment, key_kind=t.key_kind,
             fields=[_field(c, c.name in key) for c in columns], partitioning=t.partitioning,
-            ci_columns=[c for c in t.ci_columns if c in key])
+            ci_columns=[c for c in t.ci_columns if c in key], distribution=t.distribution,
+            distributed_by=[c for c in t.distributed_by if c in names], storage=t.storage,
+            storage_options=t.storage_options)
         return
     if t.partitioning is not None:
         model.issue(Severity.INFO, f"Секционирование таблицы {t.full_name} в режиме ADSO не переносится",
                     obj=t.full_name)
+    if t.distribution:
+        model.issue(Severity.INFO, f"Распределение и хранение таблицы {t.full_name} в режиме ADSO берутся из "
+                                   "type_rules.yaml, а не из источника", obj=t.full_name)
     ds = DataSource(name=name, source_system=system, source_type=source_type,
                     description=t.comment or t.full_name,
                     fields=[_field(c, False) for c in columns])

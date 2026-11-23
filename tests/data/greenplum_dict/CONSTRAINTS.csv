@@ -1,0 +1,5 @@
+TABLE_SCHEMA,TABLE_NAME,CONSTRAINT_NAME,CONSTRAINT_TYPE,COLUMNS,REF_TABLE,DEFINITION
+sales,orders,orders_pkey,p,order_id,,PRIMARY KEY (order_id)
+sales,regions,regions_pkey,p,code,,PRIMARY KEY (code)
+sales,orders,orders_region_fkey,f,region,sales.regions,FOREIGN KEY (region) REFERENCES sales.regions(code)
+sales,fact_sales,fact_sales_qty_check,c,qty,,CHECK (qty >= 0)
