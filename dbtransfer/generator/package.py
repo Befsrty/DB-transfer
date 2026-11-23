@@ -14,13 +14,13 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from dbtransfer import __version__, naming
 from dbtransfer.analysis.graph import scope_from
+from dbtransfer.generator.dialects import DEFAULT_DIALECT, DIALECTS, get_dialect
 from dbtransfer.generator.sql import ident, literal, qualified, sql_comment
 from dbtransfer.generator.tables import Column, TableBuilder, TableDef
 from dbtransfer.generator.transform import TransformBuilder, TransformSql
 from dbtransfer.generator.types import TypeRules, is_key_figure
 from dbtransfer.model import Adso, AdsoKind, InfoObjectKind, Model, RuleKind
 
-DIALECTS = ("greenplum", "postgres")
 LAYERS = ("stg", "md", "dwh", "mart", "meta")
 # Группа -> файл и заголовок, в порядке развёртывания (ФП-6.1)
 GROUPS = {
@@ -137,13 +137,12 @@ def _environment() -> Environment:
 
 class Generator:
     def __init__(self, model: Model, rules: TypeRules, dialect: str = "greenplum", scope: str | None = None):
-        if dialect not in DIALECTS:
-            raise ValueError(f"Диалект {dialect} неизвестен, допустимо: {', '.join(DIALECTS)}")
+        self.spec = get_dialect(dialect)
         self.model = model
         self.rules = rules
         self.dialect = dialect
         self.env = _environment()
-        self.tables = TableBuilder(model, rules)
+        self.tables = TableBuilder(model, rules, self.spec)
         self.transforms = TransformBuilder(model, self.tables)
         self.package = Package(model.name, model.content_hash(), dialect, model.schema_prefix)
         self._select_scope(scope)
@@ -177,7 +176,8 @@ class Generator:
         self.package.objects.append(SqlObject(group, kind, name, sql, **kw))
 
     def table_sql(self, t: TableDef) -> str:
-        return self.env.get_template("table.sql.j2").render(t=t, greenplum=self.dialect == "greenplum")
+        return self.env.get_template("table.sql.j2").render(t=t, mpp=self.spec.mpp,
+                                                         storage=self.spec.storage_clause(t.storage_options))
 
     def add_table(self, group: str, t: TableDef) -> None:
         self.add(group, "table", t.qname, self.table_sql(t), bw_object=t.bw_object, has_data=True)
@@ -206,7 +206,8 @@ class Generator:
 
     def _meta(self) -> None:
         meta = naming.schema("meta", self.model.schema_prefix)
-        sql = self.env.get_template("meta.sql.j2").render(schema=meta, schema_sql=ident(meta), sequences=SEQUENCES)
+        sql = self.env.get_template("meta.sql.j2").render(schema=meta, schema_sql=ident(meta), sequences=SEQUENCES,
+                                                        if_not_exists=self.spec.sequence_if_not_exists)
         self.add("meta", "sequence", ", ".join(qualified(meta, s) for s in SEQUENCES), sql)
 
         def col(name: str, tp: str, not_null: bool, comment: str) -> Column:
@@ -307,7 +308,9 @@ class Generator:
 
 def generate(model: Model, rules: TypeRules | None = None, dialect: str = "greenplum",
              scope: str | None = None) -> Package:
+    """Пакет SQL. Умолчание функции — greenplum (6.x) ради совместимости вызовов; CLI и интерфейс
+    по умолчанию берут DEFAULT_DIALECT (greenplum7)."""
     return Generator(model, rules or TypeRules.load(), dialect, scope).build()
 
 
-__all__ = ["DIALECTS", "GROUPS", "Generator", "Package", "SqlObject", "generate"]
+__all__ = ["DEFAULT_DIALECT", "DIALECTS", "GROUPS", "Generator", "Package", "SqlObject", "generate"]
