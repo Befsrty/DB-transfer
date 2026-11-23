@@ -1,6 +1,6 @@
 -- Таблицы ADSO
 -- Сгенерировано DB-transfer 0.1.0 (dbtransfer generate), диалект clickhouse.
--- Модель: Продажи (демо), хеш fd9833907e6e5870. Файл перезаписывается при генерации, правки вносите в модель и правила.
+-- Модель: Продажи (демо), хеш 449b73d173195658. Файл перезаписывается при генерации, правки вносите в модель и правила.
 
 CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a01_inbound
 (
@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a01_inbound
     material   Nullable(String) COMMENT 'BW: ZSD_A01.0MATERIAL (CHAR 40). Материал',
     distr_chan Nullable(String) COMMENT 'BW: ZSD_A01.0DISTR_CHAN (CHAR 2). Канал сбыта',
     calday     Nullable(Date32) COMMENT 'BW: ZSD_A01.0CALDAY (DATS 8). Календарный день',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A01.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A01.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     doc_currcy Nullable(String) COMMENT 'BW: ZSD_A01.0DOC_CURRCY (CUKY 5). Валюта документа',
     inv_qty    Nullable(Decimal(17,3)) COMMENT 'BW: ZSD_A01.0INV_QTY (QUAN 17,3). Фактурированное количество',
     sales_unit Nullable(String) COMMENT 'BW: ZSD_A01.0SALES_UNIT (UNIT 3). Единица продажи'
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS dbt_dwh.zsd_a01_active
     material   Nullable(String) COMMENT 'BW: ZSD_A01.0MATERIAL (CHAR 40). Материал',
     distr_chan Nullable(String) COMMENT 'BW: ZSD_A01.0DISTR_CHAN (CHAR 2). Канал сбыта',
     calday     Nullable(Date32) COMMENT 'BW: ZSD_A01.0CALDAY (DATS 8). Календарный день',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A01.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A01.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     doc_currcy Nullable(String) COMMENT 'BW: ZSD_A01.0DOC_CURRCY (CUKY 5). Валюта документа',
     inv_qty    Nullable(Decimal(17,3)) COMMENT 'BW: ZSD_A01.0INV_QTY (QUAN 17,3). Фактурированное количество',
     sales_unit Nullable(String) COMMENT 'BW: ZSD_A01.0SALES_UNIT (UNIT 3). Единица продажи'
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS dbt_dwh.zsd_a01_changelog
     material   Nullable(String) COMMENT 'BW: ZSD_A01.0MATERIAL (CHAR 40). Материал',
     distr_chan Nullable(String) COMMENT 'BW: ZSD_A01.0DISTR_CHAN (CHAR 2). Канал сбыта',
     calday     Nullable(Date32) COMMENT 'BW: ZSD_A01.0CALDAY (DATS 8). Календарный день',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A01.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A01.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     doc_currcy Nullable(String) COMMENT 'BW: ZSD_A01.0DOC_CURRCY (CUKY 5). Валюта документа',
     inv_qty    Nullable(Decimal(17,3)) COMMENT 'BW: ZSD_A01.0INV_QTY (QUAN 17,3). Фактурированное количество',
     sales_unit Nullable(String) COMMENT 'BW: ZSD_A01.0SALES_UNIT (UNIT 3). Единица продажи'
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a02_inbound
     calmonth   String COMMENT 'BW: ZSD_A02.0CALMONTH (NUMC 6). Календарный год/месяц',
     doc_currcy String COMMENT 'BW: ZSD_A02.0DOC_CURRCY (CUKY 5). Валюта документа',
     sales_unit String COMMENT 'BW: ZSD_A02.0SALES_UNIT (UNIT 3). Единица продажи',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A02.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A02.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     inv_qty    Nullable(Decimal(17,3)) COMMENT 'BW: ZSD_A02.0INV_QTY (QUAN 17,3). Фактурированное количество'
 )
 ENGINE = MergeTree
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS dbt_mart.zsd_a02_active
     calmonth   String COMMENT 'BW: ZSD_A02.0CALMONTH (NUMC 6). Календарный год/месяц',
     doc_currcy String COMMENT 'BW: ZSD_A02.0DOC_CURRCY (CUKY 5). Валюта документа',
     sales_unit String COMMENT 'BW: ZSD_A02.0SALES_UNIT (UNIT 3). Единица продажи',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A02.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A02.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     inv_qty    Nullable(Decimal(17,3)) COMMENT 'BW: ZSD_A02.0INV_QTY (QUAN 17,3). Фактурированное количество'
 )
 ENGINE = MergeTree
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a03_inbound
     sold_to    String COMMENT 'BW: ZSD_A03.0SOLD_TO (CHAR 10). Заказчик',
     material   String COMMENT 'BW: ZSD_A03.0MATERIAL (CHAR 40). Материал',
     calday     Date32 COMMENT 'BW: ZSD_A03.0CALDAY (DATS 8). Календарный день',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A03.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A03.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     doc_currcy Nullable(String) COMMENT 'BW: ZSD_A03.0DOC_CURRCY (CUKY 5). Валюта документа'
 )
 ENGINE = MergeTree
@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS dbt_dwh.zsd_a03_active
     sold_to    String COMMENT 'BW: ZSD_A03.0SOLD_TO (CHAR 10). Заказчик',
     material   String COMMENT 'BW: ZSD_A03.0MATERIAL (CHAR 40). Материал',
     calday     Date32 COMMENT 'BW: ZSD_A03.0CALDAY (DATS 8). Календарный день',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A03.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A03.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     doc_currcy Nullable(String) COMMENT 'BW: ZSD_A03.0DOC_CURRCY (CUKY 5). Валюта документа'
 )
 ENGINE = MergeTree
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS dbt_dwh.zsd_a03_changelog
     sold_to    String COMMENT 'BW: ZSD_A03.0SOLD_TO (CHAR 10). Заказчик',
     material   String COMMENT 'BW: ZSD_A03.0MATERIAL (CHAR 40). Материал',
     calday     Date32 COMMENT 'BW: ZSD_A03.0CALDAY (DATS 8). Календарный день',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A03.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A03.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     doc_currcy Nullable(String) COMMENT 'BW: ZSD_A03.0DOC_CURRCY (CUKY 5). Валюта документа'
 )
 ENGINE = MergeTree
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a04_inbound
     calmonth   String COMMENT 'BW: ZSD_A04.0CALMONTH (NUMC 6). Календарный год/месяц',
     doc_currcy String COMMENT 'BW: ZSD_A04.0DOC_CURRCY (CUKY 5). Валюта документа',
     sales_unit String COMMENT 'BW: ZSD_A04.0SALES_UNIT (UNIT 3). Единица продажи',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A04.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A04.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     inv_qty    Nullable(Decimal(17,3)) COMMENT 'BW: ZSD_A04.0INV_QTY (QUAN 17,3). Фактурированное количество'
 )
 ENGINE = MergeTree
@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS dbt_mart.zsd_a04_active
     calmonth   String COMMENT 'BW: ZSD_A04.0CALMONTH (NUMC 6). Календарный год/месяц',
     doc_currcy String COMMENT 'BW: ZSD_A04.0DOC_CURRCY (CUKY 5). Валюта документа',
     sales_unit String COMMENT 'BW: ZSD_A04.0SALES_UNIT (UNIT 3). Единица продажи',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A04.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A04.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     inv_qty    Nullable(Decimal(17,3)) COMMENT 'BW: ZSD_A04.0INV_QTY (QUAN 17,3). Фактурированное количество'
 )
 ENGINE = MergeTree
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS dbt_mart.zsd_d01_active
 (
     sold_to    String COMMENT 'BW: ZSD_D01.0SOLD_TO (CHAR 10). Заказчик',
     calmonth   String COMMENT 'BW: ZSD_D01.0CALMONTH (NUMC 6). Календарный год/месяц',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_D01.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_D01.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     doc_currcy Nullable(String) COMMENT 'BW: ZSD_D01.0DOC_CURRCY (CUKY 5). Валюта документа'
 )
 ENGINE = MergeTree
@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a02_work
     calmonth   String COMMENT 'BW: ZSD_A02.0CALMONTH (NUMC 6). Календарный год/месяц',
     doc_currcy String COMMENT 'BW: ZSD_A02.0DOC_CURRCY (CUKY 5). Валюта документа',
     sales_unit String COMMENT 'BW: ZSD_A02.0SALES_UNIT (UNIT 3). Единица продажи',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A02.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A02.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     inv_qty    Nullable(Decimal(17,3)) COMMENT 'BW: ZSD_A02.0INV_QTY (QUAN 17,3). Фактурированное количество'
 )
 ENGINE = MergeTree
@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a04_work
     calmonth   String COMMENT 'BW: ZSD_A04.0CALMONTH (NUMC 6). Календарный год/месяц',
     doc_currcy String COMMENT 'BW: ZSD_A04.0DOC_CURRCY (CUKY 5). Валюта документа',
     sales_unit String COMMENT 'BW: ZSD_A04.0SALES_UNIT (UNIT 3). Единица продажи',
-    netval_inv Nullable(Decimal(17,2)) COMMENT 'BW: ZSD_A04.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
+    netval_inv Nullable(Decimal(20,3)) COMMENT 'BW: ZSD_A04.0NETVAL_INV (CURR 17,2). Нетто-стоимость фактуры',
     inv_qty    Nullable(Decimal(17,3)) COMMENT 'BW: ZSD_A04.0INV_QTY (QUAN 17,3). Фактурированное количество'
 )
 ENGINE = MergeTree

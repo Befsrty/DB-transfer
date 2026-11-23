@@ -1,6 +1,6 @@
 -- Входные таблицы DataSource
 -- Сгенерировано DB-transfer 0.1.0 (dbtransfer generate), диалект greenplum.
--- Модель: Продажи (демо), хеш fd9833907e6e5870. Файл перезаписывается при генерации, правки вносите в модель и правила.
+-- Модель: Продажи (демо), хеш 449b73d173195658. Файл перезаписывается при генерации, правки вносите в модель и правила.
 
 CREATE TABLE IF NOT EXISTS dbt_stg.zsales_ff (
     load_id    bigint NOT NULL,
@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsales_ff (
     sold_to    varchar(10),
     material   varchar(40),
     calday     date,
-    netval     numeric(17,2),
-    discount   numeric(17,2),
+    netval     numeric(20,3),
+    discount   numeric(20,3),
     currency   varchar(5),
     qty        numeric(17,3),
     unit       varchar(3)

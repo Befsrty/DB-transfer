@@ -1,6 +1,6 @@
 -- Таблицы ADSO
 -- Сгенерировано DB-transfer 0.1.0 (dbtransfer generate), диалект greenplum.
--- Модель: Продажи (демо), хеш fd9833907e6e5870. Файл перезаписывается при генерации, правки вносите в модель и правила.
+-- Модель: Продажи (демо), хеш 449b73d173195658. Файл перезаписывается при генерации, правки вносите в модель и правила.
 
 CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a01_inbound (
     load_id    bigint NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a01_inbound (
     material   varchar(40),
     distr_chan varchar(2),
     calday     date,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     doc_currcy varchar(5),
     inv_qty    numeric(17,3),
     sales_unit varchar(3)
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS dbt_dwh.zsd_a01_active (
     material   varchar(40),
     distr_chan varchar(2),
     calday     date,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     doc_currcy varchar(5),
     inv_qty    numeric(17,3),
     sales_unit varchar(3),
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS dbt_dwh.zsd_a01_changelog (
     material   varchar(40),
     distr_chan varchar(2),
     calday     date,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     doc_currcy varchar(5),
     inv_qty    numeric(17,3),
     sales_unit varchar(3)
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a02_inbound (
     calmonth   varchar(6) NOT NULL,
     doc_currcy varchar(5) NOT NULL,
     sales_unit varchar(3) NOT NULL,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     inv_qty    numeric(17,3)
 )
 WITH (appendonly=true, orientation=column, compresstype=zstd, compresslevel=1)
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS dbt_mart.zsd_a02_active (
     calmonth   varchar(6) NOT NULL,
     doc_currcy varchar(5) NOT NULL,
     sales_unit varchar(3) NOT NULL,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     inv_qty    numeric(17,3),
     PRIMARY KEY (sold_to, calmonth, doc_currcy, sales_unit)
 )
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a03_inbound (
     sold_to    varchar(10) NOT NULL,
     material   varchar(40) NOT NULL,
     calday     date NOT NULL,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     doc_currcy varchar(5)
 )
 WITH (appendonly=true, orientation=column, compresstype=zstd, compresslevel=1)
@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS dbt_dwh.zsd_a03_active (
     sold_to    varchar(10) NOT NULL,
     material   varchar(40) NOT NULL,
     calday     date NOT NULL,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     doc_currcy varchar(5),
     PRIMARY KEY (sold_to, material, calday)
 )
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS dbt_dwh.zsd_a03_changelog (
     sold_to    varchar(10) NOT NULL,
     material   varchar(40) NOT NULL,
     calday     date NOT NULL,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     doc_currcy varchar(5)
 )
 WITH (appendonly=true, orientation=column, compresstype=zstd, compresslevel=1)
@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS dbt_stg.zsd_a04_inbound (
     calmonth   varchar(6) NOT NULL,
     doc_currcy varchar(5) NOT NULL,
     sales_unit varchar(3) NOT NULL,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     inv_qty    numeric(17,3)
 )
 WITH (appendonly=true, orientation=column, compresstype=zstd, compresslevel=1)
@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS dbt_mart.zsd_a04_active (
     calmonth   varchar(6) NOT NULL,
     doc_currcy varchar(5) NOT NULL,
     sales_unit varchar(3) NOT NULL,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     inv_qty    numeric(17,3),
     PRIMARY KEY (matl_group, calmonth, doc_currcy, sales_unit)
 )
@@ -239,7 +239,7 @@ COMMENT ON COLUMN dbt_mart.zsd_a04_active.inv_qty IS 'BW: ZSD_A04.0INV_QTY (QUAN
 CREATE TABLE IF NOT EXISTS dbt_mart.zsd_d01_active (
     sold_to    varchar(10) NOT NULL,
     calmonth   varchar(6) NOT NULL,
-    netval_inv numeric(17,2),
+    netval_inv numeric(20,3),
     doc_currcy varchar(5),
     PRIMARY KEY (sold_to, calmonth)
 )

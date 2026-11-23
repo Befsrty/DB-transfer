@@ -350,6 +350,8 @@ def load_cmd(
                 typer.secho(f"  … и ещё {e.total - len(e.errors)}", fg=typer.colors.RED, err=True)
             raise typer.Exit(EXIT_DATA_ERROR) from None
     typer.echo(f"Загружено строк: {res.rows} в {res.table}")
+    for w in res.warnings:
+        typer.secho(f"Предупреждение: {w}", fg=typer.colors.YELLOW)
     typer.secho(f"load_id: {res.load_id}", fg=typer.colors.GREEN)
 
 

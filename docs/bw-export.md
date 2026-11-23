@@ -60,3 +60,4 @@ dbtransfer import <папка с выгрузкой> -p <проект>
 | Запросы | RSZCOMPDIR | нет | COMPID, OBJVERS, INFOCUBE | DEFTP | BEx-запросы и провайдер, на котором они построены, только для отчёта |
 | Иерархии | RSHIEDIR | нет | HIEID, OBJVERS, IOBJNM | HIENM | Иерархии признаков, только для отчёта |
 | Цепочки процессов | RSPCCHAIN | нет | CHAIN_ID, OBJVERS, TYPE, VARIANTE | — | Шаги цепочек процессов, только для отчёта |
+| Валюты | TCURX | нет | CURRKEY, CURRDEC | — | Число знаков после запятой у валют, если оно не 2 (JPY 0, KWD 3); для пересчёта сумм CURR, см. [currency.md](currency.md) |

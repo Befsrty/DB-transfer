@@ -466,6 +466,8 @@ def tab_deploy(project: Project, model: Model) -> None:
             try:
                 res = load_file(conn, model, rules, target, path, force)
                 st.success(f"Загружено строк {res.rows} в {res.table}, load_id {res.load_id}")
+                for w in res.warnings:
+                    st.warning(w)
             except LoadError as e:
                 st.error(str(e))
                 if e.errors:
