@@ -43,7 +43,7 @@ def load_bw_tables(path: Path = RULES_DIR / "bw_tables.yaml") -> dict[str, BwTab
 
 # Описание таблиц словаря по виду источника модели (Model.source_kind)
 DICT_TABLE_FILES = {"sap_bw": "bw_tables.yaml", "oracle": "oracle_dict.yaml", "mssql": "mssql_dict.yaml",
-                    "greenplum": "greenplum_dict.yaml"}
+                    "greenplum": "greenplum_dict.yaml", "teradata": "teradata_dict.yaml"}
 
 
 def source_tables(kind: str) -> dict[str, BwTable]:

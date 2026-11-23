@@ -19,7 +19,7 @@ from dbtransfer.config import load_db_settings, source_tables
 from dbtransfer.db import DbError, check_connection, connect, server_dialect
 from dbtransfer.deploy import ACTION_TEXT, DeployError, deploy
 from dbtransfer.generator import DEFAULT_DIALECT, DIALECTS, Package, RulesError, TypeRules, generate
-from dbtransfer.importers import greenplum
+from dbtransfer.importers import greenplum, teradata
 from dbtransfer.importers.bw_csv import ImportFailed
 from dbtransfer.importers.sources import SOURCES, export_help, import_model, source_kind
 from dbtransfer.model import Model, Severity
@@ -97,7 +97,7 @@ SourceOption = Annotated[
 
 @app.command("tables")
 def tables_cmd(source: SourceOption = "bw") -> None:
-    """Список таблиц для выгрузки (BW через SE16, словарь Oracle, MS SQL Server, каталог Greenplum)."""
+    """Список таблиц для выгрузки (BW через SE16, словарь Oracle, MS SQL Server, Teradata, каталог Greenplum)."""
     try:
         specs = source_tables(source_kind(source))
     except ImportFailed as e:
@@ -123,17 +123,21 @@ def import_cmd(
     language: Annotated[str, typer.Option(help="Язык текстов SAP: R русский, E английский.")] = "R",
     source: SourceOption = "bw",
     url: Annotated[str | None, typer.Option(
-        help="Oracle, MS SQL Server и Greenplum: подключение вместо папки, oracle://user@host:1521/service, "
-             "mssql://user@host:1433/база или greenplum://user@host:5432/база. "
+        help="Oracle, MS SQL Server, Greenplum и Teradata: подключение вместо папки, oracle://user@host:1521/service, "
+             "mssql://user@host:1433/база, greenplum://user@host:5432/база или teradata://user@host/?logmech=LDAP. "
              "Пароль — из переменной DBT_SRC_PASSWORD.")] = None,
     schemas: Annotated[str | None, typer.Option(
-        help="Oracle, MS SQL Server и Greenplum: схемы через запятую. По умолчанию все, кроме служебных.")] = None,
+        help="Oracle, MS SQL Server, Greenplum и Teradata: схемы (базы Teradata) через запятую. "
+             "По умолчанию все, кроме служебных.")] = None,
     target: Annotated[str, typer.Option(
-        help="Oracle, MS SQL Server и Greenplum: table — таблица 1:1 с исходным именем (по умолчанию), "
+        help="Реляционные источники: table — таблица 1:1 с исходным именем (по умолчанию), "
              "adso — поток как в BW: входная таблица, ADSO, трансформация, активация.")] = "table",
     system: Annotated[str | None, typer.Option(
         help="Oracle и MS SQL Server: имя исходной системы у входных таблиц (по умолчанию ORACLE или имя базы).")
     ] = None,
+    scripts: Annotated[Path | None, typer.Option(
+        help="Teradata: папка скриптов BTEQ, FastLoad, MultiLoad, TPT для отчёта о сложности "
+             "(по умолчанию подпапка bteq или scripts папки выгрузки).")] = None,
 ) -> None:
     """Импорт и проверка выгрузок: модель в model.json, проверка файлов в out/import_check.xlsx."""
     proj = _project(project)
@@ -141,7 +145,7 @@ def import_cmd(
     try:
         model = import_model(source, None if url else where, url=url, password=os.environ.get("DBT_SRC_PASSWORD"),
                              schemas=schemas.split(",") if schemas else None, system=system, language=language,
-                             target=target,
+                             target=target, scripts=scripts,
                              encoding=encoding, delimiter="\t" if delimiter == "tab" else delimiter)
     except ImportFailed as e:
         raise _fail(str(e)) from None
@@ -417,16 +421,19 @@ def reconcile_cmd(
 
 
 SourceUrlOption = Annotated[str, typer.Option(
-    "--url", help="Источник Greenplum: greenplum://user@host:5432/база, пароль — из DBT_SRC_PASSWORD.")]
+    "--url", help="Источник: greenplum://user@host:5432/база или teradata://user@host/?logmech=LDAP, "
+                  "пароль — из DBT_SRC_PASSWORD.")]
 TablesOption = Annotated[str | None, typer.Option(help="Таблицы через запятую (SALES.ORDERS). По умолчанию все.")]
 
 
 def _source_connect(url: str):
     try:
-        return greenplum.connect(url, os.environ.get("DBT_SRC_PASSWORD"))
+        connector = teradata.connect if url.split(":", 1)[0].lower() in ("teradata", "td", "vantage") \
+            else greenplum.connect
+        return connector(url, os.environ.get("DBT_SRC_PASSWORD"))
     except ImportFailed as e:
         raise _fail(str(e), EXIT_ENV_ERROR) from None
-    except Exception as e:  # noqa: BLE001 — ошибки psycopg и сети
+    except Exception as e:  # noqa: BLE001 — ошибки драйверов и сети
         raise _fail(f"нет подключения к источнику: {str(e).strip()}", EXIT_ENV_ERROR) from None
 
 
@@ -452,7 +459,7 @@ def export_data_cmd(
     tables: TablesOption = None,
     project: ProjectOption = None,
 ) -> None:
-    """Greenplum: выгрузить данные таблиц модели в CSV для dbtransfer load (NULL — \\N)."""
+    """Greenplum и Teradata: выгрузить данные таблиц модели в CSV для dbtransfer load (NULL — \\N)."""
     proj = _project(project)
     with _source_connect(url) as src:
         try:
@@ -471,7 +478,7 @@ def transfer_cmd(
     project: ProjectOption = None,
     env_file: EnvOption = Path(".env"),
 ) -> None:
-    """Greenplum: перенести данные таблиц в развёрнутую цель и сверить число строк и суммы с источником."""
+    """Greenplum и Teradata: перенести данные таблиц в развёрнутую цель и сверить число строк и суммы с источником."""
     proj = _project(project)
     with _source_connect(url) as src, _connect(env_file) as conn:
         model, rules, _ = _model_package(proj, conn)
@@ -494,7 +501,7 @@ def compare_cmd(
     project: ProjectOption = None,
     env_file: EnvOption = Path(".env"),
 ) -> None:
-    """Greenplum: сверить число строк и суммы числовых колонок источника и цели по каждой таблице."""
+    """Greenplum и Teradata: сверить число строк и суммы числовых колонок источника и цели по каждой таблице."""
     proj = _project(project)
     with _source_connect(url) as src, _connect(env_file) as conn:
         model, rules, _ = _model_package(proj, conn)

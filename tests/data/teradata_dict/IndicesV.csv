@@ -1,0 +1,10 @@
+DatabaseName,TableName,IndexNumber,IndexType,UniqueFlag,IndexName,ColumnName,ColumnPosition
+SALES,Customers,1,P,Y,,CustomerId,1
+SALES,Orders,1,Q,N,,CustomerId,1
+SALES,Orders,4,K,Y,PK_Orders,OrderId,1
+SALES,OrderLines,1,Q,Y,,LineNo,2
+SALES,OrderLines,1,Q,Y,,OrderId,1
+SALES,OrderLines,4,S,N,,Sku,1
+SALES,EventLog,1,P,N,,EventType,1
+SALES,Daily,1,Q,N,,D,1
+SALES,TmpLoad,1,P,N,,Id,1

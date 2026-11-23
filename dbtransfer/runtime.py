@@ -343,8 +343,8 @@ def load_file(conn: psycopg.Connection, model: Model, rules: TypeRules, object_n
             cur.execute(f"DROP TABLE IF EXISTS {raw}")
             raw_cols = [c.sql_name for c in columns]
             cur.execute(f"CREATE TABLE {raw} (dbt_line_no bigint, " + ", ".join(f"{c} text" for c in raw_cols) + ")")
-            # Выгрузка Greenplum (dbtransfer export-data) пишет NULL как \\N, чтобы отличить его от пустой строки
-            null = NULL_MARKER if model.source_kind == SourceKind.GREENPLUM else None
+            # Выгрузка Greenplum и Teradata (export-data) пишет NULL как \\N, чтобы отличить его от пустой строки
+            null = NULL_MARKER if model.source_kind in (SourceKind.GREENPLUM, SourceKind.TERADATA) else None
             with cur.copy(f"COPY {raw} (dbt_line_no, {', '.join(raw_cols)}) FROM STDIN") as copy:
                 for line, values in rows:
                     copy.write_row([line, *(None if v == null else v for v in values)])

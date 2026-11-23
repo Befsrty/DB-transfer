@@ -1,0 +1,8 @@
+SESSIONS 4;
+LOGON tdprod/etl,secret;
+DEFINE CustomerId (VARCHAR(10)), Name (VARCHAR(100))
+FILE = customers.txt;
+BEGIN LOADING SALES.Customers ERRORFILES SALES.Cust_e1, SALES.Cust_e2;
+INSERT INTO SALES.Customers VALUES (:CustomerId, :Name);
+END LOADING;
+LOGOFF;

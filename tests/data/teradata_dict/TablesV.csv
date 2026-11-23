@@ -1,0 +1,28 @@
+DatabaseName,TableName,TableKind,CheckOpt,CommitOpt,CommentString,RequestText
+SALES,Customers,T,Y,N,Клиенты,CREATE SET TABLE SALES.Customers ... UNIQUE PRIMARY INDEX (CustomerId);
+SALES,Orders,T,N,N,Заказы,CREATE MULTISET TABLE SALES.Orders ... PRIMARY INDEX (CustomerId) PARTITION BY RANGE_N(...);
+SALES,OrderLines,T,N,N,,
+SALES,EventLog,T,Y,N,Журнал событий,"CREATE SET TABLE SALES.EventLog (EventType CHAR(10) COMPRESS ('CLICK', 'VIEW'), ...) PRIMARY INDEX (EventType);"
+SALES,Clicks,O,N,N,,CREATE MULTISET TABLE SALES.Clicks (...) NO PRIMARY INDEX PARTITION BY COLUMN;
+SALES,Daily,T,N,N,,
+SALES,TmpLoad,T,N,P,,
+SALES,vLastOrder,V,N,N,,"REPLACE VIEW SALES.vLastOrder AS LOCKING ROW FOR ACCESS
+SEL o.OrderId, o.OrderDate, c.Name
+FROM SALES.Orders o
+JOIN SALES.Customers c ON c.CustomerId = o.CustomerId
+QUALIFY ROW_NUMBER() OVER (PARTITION BY o.CustomerId ORDER BY o.OrderDate DESC) = 1;"
+SALES,mLoadDay,M,N,N,,"REPLACE MACRO SALES.mLoadDay (d DATE) AS (
+  DEL FROM SALES.EventLog WHERE CAST(EventTs AS DATE) = :d;
+  INS INTO SALES.EventLog SEL * FROM STG.Events WHERE CAST(EventTs AS DATE FORMAT 'YYYY-MM-DD') = :d;
+);"
+SALES,spRecalc,P,N,N,,"REPLACE PROCEDURE SALES.spRecalc()
+BEGIN
+  MERGE INTO SALES.Customers c USING (SEL CustomerId, ZEROIFNULL(SUM(Amount)) s FROM SALES.Orders GROUP BY 1) o
+  ON c.CustomerId = o.CustomerId
+  WHEN MATCHED THEN UPDATE SET Segment = CASE WHEN o.s > 1000 THEN 1 ELSE 0 END;
+END;"
+SALES,fnNet,F,N,N,,
+SALES,trgOrders,G,N,N,,REPLACE TRIGGER SALES.trgOrders AFTER INSERT ON SALES.Orders ...
+SALES,jiOrders,I,N,N,,"CREATE JOIN INDEX SALES.jiOrders AS SEL CustomerId, OrderDate FROM SALES.Orders;"
+SALES,hiOrders,N,N,N,,
+DBC,TVM,T,N,N,,

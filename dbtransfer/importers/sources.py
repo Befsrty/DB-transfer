@@ -1,4 +1,4 @@
-"""Выбор источника модели: выгрузки SAP BW, словарь Oracle / MS SQL Server или каталог Greenplum.
+"""Выбор источника модели: выгрузки SAP BW, словарь Oracle / MS SQL Server / Teradata или каталог Greenplum.
 
 Командная строка и интерфейс вызывают import_model и export_help, не зная устройства импортёров.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from dbtransfer.importers import greenplum, mssql_dict, oracle_dict
+from dbtransfer.importers import greenplum, mssql_dict, oracle_dict, teradata
 from dbtransfer.importers.bw_csv import SE16_HELP, ImportFailed, import_bw_export
 from dbtransfer.model import Model, SourceKind
 
@@ -19,10 +19,12 @@ SOURCES = {
     "mssql": (SourceKind.MSSQL, "MS SQL Server: INFORMATION_SCHEMA и sys.*"),
     "greenplum": (SourceKind.GREENPLUM, "Greenplum: pg_catalog и gp_distribution_policy (Greenplum 6/7, "
                                         "Yandex MPP, Cloudberry)"),
+    "teradata": (SourceKind.TERADATA, "Teradata: словарь DBC (TablesV, ColumnsV, IndicesV), скрипты BTEQ"),
 }
-CONNECTORS = {"oracle": oracle_dict.connect, "mssql": mssql_dict.connect, "greenplum": greenplum.connect}
+CONNECTORS = {"oracle": oracle_dict.connect, "mssql": mssql_dict.connect, "greenplum": greenplum.connect,
+              "teradata": teradata.connect}
 IMPORTERS = {SourceKind.ORACLE: oracle_dict.import_oracle_dict, SourceKind.MSSQL: mssql_dict.import_mssql_dict,
-             SourceKind.GREENPLUM: greenplum.import_greenplum}
+             SourceKind.GREENPLUM: greenplum.import_greenplum, SourceKind.TERADATA: teradata.import_teradata}
 
 
 def source_kind(source: str) -> SourceKind:
@@ -40,14 +42,17 @@ def export_help(source: str) -> str:
         return mssql_dict.help_text()
     if kind == SourceKind.GREENPLUM:
         return greenplum.help_text()
+    if kind == SourceKind.TERADATA:
+        return teradata.help_text()
     return SE16_HELP
 
 
 def import_model(source: str, folder: Path | str | None = None, *, url: str | None = None,
                  password: str | None = None, schemas: Iterable[str] | None = None, system: str | None = None,
                  encoding: str | None = None, delimiter: str | None = None, language: str = "R",
-                 target: str = "table") -> Model:
-    """Построить модель: из папки выгрузок или, для Oracle, MS SQL Server и Greenplum, по подключению url."""
+                 target: str = "table", scripts: Path | str | None = None) -> Model:
+    """Построить модель: из папки выгрузок или, для Oracle, MS SQL Server, Greenplum и Teradata, по подключению url.
+    scripts — папка скриптов BTEQ / FastLoad / MultiLoad / TPT (только Teradata)."""
     kind = source_kind(source)
     if kind == SourceKind.SAP_BW:
         if url:
@@ -55,6 +60,10 @@ def import_model(source: str, folder: Path | str | None = None, *, url: str | No
         return import_bw_export(folder, language=language, encoding=encoding, delimiter=delimiter)
     importer = IMPORTERS[kind]
     extra = {"system": system.upper(), "target": target} if system else {"target": target}
+    if scripts is not None:
+        if kind != SourceKind.TERADATA:
+            raise ImportFailed("Папка скриптов (--scripts) есть только у источника teradata")
+        extra["scripts"] = scripts
     if url:
         try:
             conn = CONNECTORS[source](url, password)

@@ -1,19 +1,24 @@
-"""Перенос данных из источника той же семьи (Greenplum, Yandex MPP, Cloudberry) и сверка источника с целью.
+"""Перенос данных из Greenplum (Yandex MPP, Cloudberry) и Teradata и сверка источника с целью.
 
-Данные идут обычным путём загрузчика: выгрузка таблицы в CSV (COPY … TO STDOUT через мастер), затем
+Данные идут обычным путём загрузчика: выгрузка таблицы в CSV (Greenplum — COPY … TO STDOUT через мастер,
+Teradata — SELECT через teradatasql, значения форматирует Python), затем
 load_file в таблицу 1:1. Так работают те же проверки типов, журнал загрузок и перезапись по ключу, что и для
 Oracle и MS SQL Server. Для сотен гигабайт это медленно — там нужны gpfdist / PXF или gpcopy между кластерами;
 здесь цель — проверить перенос структуры на реальных данных и сверить результат.
 
 Сверка: число строк и суммы всех числовых колонок каждой таблицы в источнике и в цели. Целые и numeric
 сравниваются точно, real и double precision — с относительным допуском (порядок сложения по сегментам разный).
+В Teradata SUM(INTEGER) — тоже INTEGER и переполняется, поэтому суммы считаются в DECIMAL(38).
 """
 
 from __future__ import annotations
 
+import csv
 import math
 from collections.abc import Callable, Iterable
+from contextlib import closing
 from dataclasses import dataclass, field
+from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
 
@@ -31,6 +36,11 @@ EXPORT_SETTINGS = ("SET DateStyle = 'ISO, YMD'", "SET TimeZone = 'UTC'", "SET ex
                    "SET bytea_output = 'hex'")
 
 
+# Источники, из которых данные читаются напрямую
+TRANSFER_SOURCES = {SourceKind.GREENPLUM: "Greenplum", SourceKind.TERADATA: "Teradata"}
+FETCH_ROWS = 10000
+
+
 class TransferError(Exception):
     """Перенос или сверка не выполнены; текст понятен пользователю."""
 
@@ -45,9 +55,9 @@ def _source_name(t: DbTable) -> str:
 
 
 def _tables(model: Model, names: Iterable[str] | None) -> list[DbTable]:
-    if model.source_kind != SourceKind.GREENPLUM:
-        raise TransferError("Перенос данных напрямую из базы есть только для источника Greenplum; для других "
-                            "источников выгрузите CSV и загрузите командой dbtransfer load")
+    if model.source_kind not in TRANSFER_SOURCES:
+        raise TransferError("Перенос данных напрямую из базы есть только для источников Greenplum и Teradata; для "
+                            "других источников выгрузите CSV и загрузите командой dbtransfer load")
     if not model.tables:
         raise TransferError("В модели нет таблиц 1:1: импортируйте каталог с --target table")
     if not names:
@@ -65,8 +75,10 @@ def file_name(t: DbTable) -> str:
     return f"{t.schema_name}.{t.name}.csv"
 
 
-def export_table(conn, t: DbTable, path: Path) -> Path:
+def export_table(conn, t: DbTable, path: Path, kind: SourceKind = SourceKind.GREENPLUM) -> Path:
     """Выгрузить таблицу источника в CSV: заголовок — имена колонок, NULL — \\N, bytea — 0x и hex."""
+    if kind != SourceKind.GREENPLUM:
+        return export_dbapi(conn, t, path)
     columns = []
     for f in sorted(t.fields, key=lambda x: x.position):
         col = _q(f.name)
@@ -86,11 +98,44 @@ def export_table(conn, t: DbTable, path: Path) -> Path:
     return path
 
 
+def csv_value(value) -> str:
+    """Значение из драйвера DB-API (teradatasql) -> текст CSV в форме, которую понимает загрузчик."""
+    if value is None:
+        return NULL_MARKER
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, bytes | bytearray | memoryview):
+        return "0x" + bytes(value).hex()
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ")
+    if isinstance(value, date | time):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value, "f")  # без показателя степени: 1E+3 -> 1000
+    if isinstance(value, float):
+        return repr(value)  # кратчайшая запись без потери знаков
+    return str(value)
+
+
+def export_dbapi(conn, t: DbTable, path: Path) -> Path:
+    """Выгрузка через DB-API (Teradata): SELECT всех колонок, значения пишутся порциями по FETCH_ROWS."""
+    fields = sorted(t.fields, key=lambda x: x.position)
+    sql = f"SELECT {', '.join(_q(f.name) for f in fields)} FROM {_source_name(t)}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with closing(conn.cursor()) as cur, path.open("w", encoding="utf-8", newline="") as out:
+        cur.execute(sql)
+        writer = csv.writer(out)
+        writer.writerow([f.name for f in fields])
+        while chunk := cur.fetchmany(FETCH_ROWS):
+            writer.writerows([csv_value(v) for v in row] for row in chunk)
+    return path
+
+
 def export_data(conn, model: Model, out_dir: Path, names: Iterable[str] | None = None,
                 progress: Callable[[DbTable, Path], None] | None = None) -> list[Path]:
     paths = []
     for t in _tables(model, names):
-        path = export_table(conn, t, out_dir / file_name(t))
+        path = export_table(conn, t, out_dir / file_name(t), model.source_kind)
         paths.append(path)
         if progress:
             progress(t, path)
@@ -107,7 +152,7 @@ def transfer_data(source_conn, target_conn, model: Model, rules: TypeRules, work
     builder = TableBuilder(model, rules)
     results = []
     for t in _tables(model, names):
-        path = export_table(source_conn, t, work_dir / file_name(t))
+        path = export_table(source_conn, t, work_dir / file_name(t), model.source_kind)
         try:
             target_conn.execute(f"TRUNCATE {builder.db_table(t).qname}")  # без commit: его делает load_file
             result = load_file(target_conn, model, rules, t.key_name, path, force=True)
@@ -167,10 +212,23 @@ def _measures(t: DbTable) -> list[FieldDef]:
     return [f for f in sorted(t.fields, key=lambda x: x.position) if f.datatype in NUMBER_TYPES]
 
 
-def _totals(conn, table: str, columns: list[str]) -> tuple[int, list]:
-    sums = ", ".join(f"sum({c})" for c in columns)
+def _teradata_sum(f: FieldDef) -> str:
+    """Сумма в Teradata без переполнения: SUM(INTEGER) там INTEGER, SUM(DECIMAL(9,2)) — DECIMAL(15,2)."""
+    col = _q(f.name)
+    if f.datatype in ("FLTP", "NUMERIC"):
+        return f"SUM({col})"
+    return f"SUM(CAST({col} AS DECIMAL(38,{f.decimals if f.datatype == 'DEC' else 0})))"
+
+
+def _totals(conn, table: str, sums: list[str], count: str = "count(*)", dbapi: bool = False) -> tuple[int, list]:
+    sql = f"SELECT {', '.join([count, *sums])} FROM {table}"
+    if dbapi:
+        with closing(conn.cursor()) as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+        return int(row[0]), list(row[1:])
     with conn.cursor() as cur:
-        cur.execute(f"SELECT count(*){', ' + sums if sums else ''} FROM {table}")
+        cur.execute(sql)
         row = cur.fetchone()
     if not getattr(conn, "autocommit", False):
         conn.rollback()
@@ -181,18 +239,24 @@ def compare_tables(source_conn, target_conn, model: Model, rules: TypeRules,
                    names: Iterable[str] | None = None) -> list[TableCheck]:
     """Число строк и суммы числовых колонок в источнике и в цели по каждой таблице 1:1."""
     builder = TableBuilder(model, rules)
+    teradata = model.source_kind == SourceKind.TERADATA
     checks = []
     for t in _tables(model, names):
         target = builder.db_table(t)
         check = TableCheck(table=t.key_name, target=target.qname)
         measures = _measures(t)
         try:
-            check.source_rows, source = _totals(source_conn, _source_name(t),
-                                                [_q(f.name) for f in measures])
+            if teradata:
+                check.source_rows, source = _totals(source_conn, _source_name(t),
+                                                    [_teradata_sum(f) for f in measures],
+                                                    "CAST(COUNT(*) AS BIGINT)", dbapi=True)
+            else:
+                check.source_rows, source = _totals(source_conn, _source_name(t),
+                                                    [f"sum({_q(f.name)})" for f in measures])
             check.target_rows, actual = _totals(target_conn, target.qname,
-                                                [ident(naming.db_name(f.name)) for f in measures])
-        except Exception as e:  # noqa: BLE001 — psycopg.Error и ошибки сети одинаково попадают в протокол
-            for conn in (source_conn, target_conn):
+                                                [f"sum({ident(naming.db_name(f.name))})" for f in measures])
+        except Exception as e:  # noqa: BLE001 — ошибки драйверов и сети одинаково попадают в протокол
+            for conn in (target_conn,) if teradata else (source_conn, target_conn):
                 if not getattr(conn, "autocommit", False):
                     conn.rollback()
             check.error = str(e).strip().splitlines()[0]

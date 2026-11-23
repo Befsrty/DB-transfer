@@ -58,6 +58,15 @@ OTHER = {
                             "db_routine"),
     ObjectType.EXTERNAL_TABLE: ("Внешняя таблица", 2, "внешняя таблица (gpfdist, PXF, s3) создаётся вручную: "
                                 "адреса и серверы источника в новой среде другие", "external_table"),
+    ObjectType.SCRIPT: ("Скрипт загрузки", 3, "скрипт BTEQ / FastLoad / MultiLoad / TPT переписывается: SQL Teradata "
+                        "и команды утилиты (.IF, .EXPORT, BEGIN LOADING) — на psql, gpload или gpfdist", "script"),
+}
+# Teradata: код на SQL Teradata (макросы, процедуры SPL, UDF), перевод на PL/pgSQL
+OTHER_TERADATA = {
+    ObjectType.VIEW: ("Представление", 2, "SQL Teradata (QUALIFY, SEL, FORMAT, даты как числа) переписывается "
+                      "под Greenplum", "view"),
+    ObjectType.DB_ROUTINE: ("Процедура, функция, триггер", 3, "макрос, процедура SPL, UDF или триггер Teradata "
+                            "переписывается на PL/pgSQL или SQL-функцию", "db_routine"),
 }
 # Источник той же семьи (Greenplum, Yandex MPP, Cloudberry): код и представления на том же языке, перевода нет,
 # остаётся проверка на целевой версии (Greenplum 6 — PostgreSQL 9.4, Greengage 7 и ADB 7 — PostgreSQL 12)
@@ -75,7 +84,7 @@ SOURCE_TABLE_LABEL = "Входная таблица"
 TYPE_ORDER = [*IOBJ_LABELS.values(), *ADSO_LABELS.values(), "DataSource", "Трансформация", "DTP",
               "CompositeProvider", "BEx-запрос", "Иерархия", "Цепочка процессов", "Классический DSO",
               *TABLE_LABELS.values(), SOURCE_TABLE_LABEL, "Представление", "Процедура, функция, триггер",
-              "Внешняя таблица",
+              "Внешняя таблица", "Скрипт загрузки",
               "Не разобрано"]
 
 
@@ -216,7 +225,7 @@ def assess(model: Model) -> Report:
                                   description=f"{d.source.name} → {d.target.name}"))
     for o in sorted(model.others, key=lambda o: (o.type.value, o.name)):
         known = OTHER_SAME_FAMILY if model.source_kind == SourceKind.GREENPLUM and o.type in OTHER_SAME_FAMILY \
-            else OTHER
+            else OTHER_TERADATA if model.source_kind == SourceKind.TERADATA and o.type in OTHER_TERADATA else OTHER
         label, level, reason, norm = known.get(o.type, (o.type.value, 3, "прочий объект", "unparsed_object"))
         hours = norms[norm]
         if o.lines and f"{norm}_per_50_lines" in norms:
