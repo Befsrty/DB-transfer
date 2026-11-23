@@ -34,6 +34,7 @@ CSV-выгрузки SE16 ──import──▶ Model (model.json) ──assess�
 | `generator/formula_sql.py` | Перевод формул BW в SQL (приложение В ТЗ) | `translate(formula, resolve)` |
 | `generator/transform.py` | SQL трансформаций: правила, чтение атрибутов, время, фильтр DTP, заготовки для рутин | `TransformBuilder` |
 | `generator/package.py` | Сборка пакета по группам `010_schemas` … `070_transformations`, шаблоны Jinja2 в `templates/` | `generate(model, rules, dialect, scope) → Package` |
+| `generator/clickhouse.py`, `generator/sql_functions.py` | Пакет для ClickHouse: типы и движки по секции `clickhouse` в `type_rules.yaml`, шаблоны `templates/clickhouse/`, активация и трансформации как шаги; функции дат и строк по диалекту | `ClickHouseGenerator`, `ClickHouseSql` |
 | `db.py` | Подключение psycopg 3, проверка прав, выбор диалекта по версии сервера | `connect`, `check_connection`, `server_dialect` |
 | `deploy.py` | План (создать, оставить, заменить, пересоздать), выполнение одной транзакцией, журнал `deploy_log` и его копия в `out/`, защита от развёртывания изменённой модели без пересоздания | `make_plan`, `deploy`, `save_log` |
 | `runtime.py` | Загрузка CSV через COPY в сырую таблицу, проверка значений в SQL, перенос во входную таблицу; прогон загрузки по составу переноса; откат | `load_file`, `run_load`, `rollback_load`, `flow_steps` |
@@ -79,7 +80,7 @@ CSV-выгрузки SE16 ──import──▶ Model (model.json) ──assess�
 
 ## Как добавить целевую СУБД
 
-Цель — то, для чего генерируется SQL. Сейчас поддержаны диалекты `greenplum7` (Arenadata DB 7.5, Greengage 7, основной), `greenplum` (ADB 6.x, Greengage 6, Greenplum 6, Yandex MPP — совместимость) и `postgres` (без `DISTRIBUTED BY` и параметров хранения). Возможности каждого диалекта описаны флагами в `generator/dialects.py`, различия версий — в [greengage7.md](greengage7.md).
+Цель — то, для чего генерируется SQL. Сейчас поддержаны диалекты `greenplum7` (Arenadata DB 7.5, Greengage 7, основной), `greenplum` (ADB 6.x, Greengage 6, Greenplum 6, Yandex MPP — совместимость) и `postgres` (без `DISTRIBUTED BY` и параметров хранения). Возможности каждого диалекта описаны флагами в `generator/dialects.py`, различия версий — в [greengage7.md](greengage7.md). Диалект `clickhouse` (Yandex Managed Service for ClickHouse) пока только генерирует пакет — подробности и допущения в [clickhouse.md](clickhouse.md). На нём видно, как устроена цель с другим синтаксисом: свои шаблоны в `templates/clickhouse/`, генератор-наследник `generator/clickhouse.py`, функции дат и строк в `generator/sql_functions.py`, секция правил `clickhouse` в `type_rules.yaml`, шаги вместо функций в `SqlObject.steps`.
 
 1. Добавить имя в `DIALECTS` в `generator/package.py`.
 2. Различия в DDL описываются в шаблонах `generator/templates/*.sql.j2` через флаги возможностей диалекта (`mpp`, `storage`, `if_not_exists`; объект `Dialect` из `generator/dialects.py`). Для СУБД с другим синтаксисом (например, ClickHouse) лучше завести отдельную папку шаблонов и выбирать её по диалекту в `Generator`.

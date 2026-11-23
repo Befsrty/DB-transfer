@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from dbtransfer import naming
 from dbtransfer.generator.formula_sql import FormulaError, translate
 from dbtransfer.generator.sql import ident, literal, qualified
+from dbtransfer.generator.sql_functions import POSTGRES, SqlDialect
 from dbtransfer.generator.tables import TableBuilder, TableDef
 from dbtransfer.model import (
     Adso,
@@ -21,7 +22,8 @@ from dbtransfer.model import (
     Transformation,
 )
 
-# Преобразование времени: InfoObject цели -> формат to_char и начальное значение (ТЗ, ФП-5.8, приложение Б.3)
+# Преобразование времени: InfoObject цели -> формат (ключ dialect.PG_FORMATS) и начальное значение
+# (ТЗ, ФП-5.8, приложение Б.3)
 TIME_FORMATS = {
     "0CALMONTH": ("YYYYMM", "000000"),
     "0CALYEAR": ("YYYY", "0000"),
@@ -87,33 +89,34 @@ class _Source:
     recordmode: str
 
 
-def convert(expr: str, src: FieldDef | None, tgt: FieldDef) -> str:
+def convert(expr: str, src: FieldDef | None, tgt: FieldDef, d: SqlDialect = POSTGRES) -> str:
     """Приведение значения между датой BW и строковым представлением ГГГГММДД."""
     if src is None or src.datatype == tgt.datatype:
         return expr
     if src.datatype == "DATS" and tgt.datatype in TEXT_LIKE:
-        return f"coalesce(to_char({expr}, 'YYYYMMDD'), '00000000')"
+        return f"coalesce({d.date_to_text(expr, 'YYYYMMDD')}, '00000000')"
     if src.datatype in TEXT_LIKE and tgt.datatype == "DATS":
-        return f"to_date(nullif(nullif({expr}, ''), '00000000'), 'YYYYMMDD')"
+        return d.text_to_date(expr)
     return expr
 
 
-def constant(value: str, tgt: FieldDef) -> str:
+def constant(value: str, tgt: FieldDef, d: SqlDialect = POSTGRES) -> str:
     if tgt.datatype == "DATS" and len(value) == 8 and value.isdigit():
-        return "NULL" if value == "00000000" else f"DATE '{value[:4]}-{value[4:6]}-{value[6:]}'"
+        return "NULL" if value == "00000000" else d.date_literal(f"{value[:4]}-{value[4:6]}-{value[6:]}")
     if tgt.datatype in {"CURR", "QUAN", "DEC", "INT1", "INT2", "INT4", "INT8", "FLTP"}:
         try:
             float(value.replace(",", "."))
             return value.replace(",", ".")
         except ValueError:
             pass
-    return literal(value)
+    return d.literal(value)
 
 
 class TransformBuilder:
-    def __init__(self, model: Model, tables: TableBuilder):
+    def __init__(self, model: Model, tables: TableBuilder, dialect: SqlDialect = POSTGRES):
         self.model = model
         self.tables = tables
+        self.d = dialect
 
     def dtp_for(self, tr: Transformation) -> Dtp | None:
         found = [d for d in self.model.dtps.values()
@@ -160,11 +163,12 @@ class TransformBuilder:
     # --- источник ---
     def _source(self, source: Adso | DataSource, target: Adso, mode: str, result: TransformSql) -> _Source:
         full = mode == "FULL"
+        p = self.d.load_id
         result.mode_text = ("Полная загрузка: все данные источника пишутся одной новой загрузкой p_load_id"
                             if full else "Дельта: записи источника с номером загрузки p_load_id")
         if isinstance(source, DataSource):
             table = qualified(naming.schema("stg", self.model.schema_prefix), naming.table("datasource", source.name))
-            return _Source(table, source.fields, False, [] if full else ["s.load_id = p_load_id"],
+            return _Source(table, source.fields, False, [] if full else [f"s.load_id = {p}"],
                            "row_number() OVER (ORDER BY s.load_id, s.record_no)" if full else "s.record_no", "' '")
 
         keys = [ident(naming.column(f.name, f.info_object)) for f in self.tables.adso_keys(source)]
@@ -177,7 +181,7 @@ class TransformBuilder:
             return _Source(table, source.fields, True, [], by_key, "' '")
         if source.kind == AdsoKind.STANDARD:
             table = self._adso_qname(source, "change_log")
-            where = ["s.load_id = p_load_id"]
+            where = [f"s.load_id = {p}"]
             if target.kind == AdsoKind.STANDARD:
                 where.append("s.recordmode <> 'X'")
                 result.notes.append("Цель с перезаписью: из журнала изменений берутся новые записи и after image, "
@@ -186,7 +190,7 @@ class TransformBuilder:
                 result.notes.append("Источник — журнал изменений: before image (X) с минусом снимает старые суммы")
             return _Source(table, source.fields, True, where, "s.record_no", "s.recordmode")
         table = self._adso_qname(source, "inbound")
-        where = [] if full else ["s.load_id = p_load_id"]
+        where = [] if full else [f"s.load_id = {p}"]
         record_no = "row_number() OVER (ORDER BY s.load_id, s.record_no)" if full else "s.record_no"
         return _Source(table, source.fields, True, where, record_no, "' '" if full else "s.recordmode")
 
@@ -220,12 +224,12 @@ class TransformBuilder:
             if resolved is None:
                 result.stub.append(f"{tgt.name}: поле источника {name or '(не указано)'} не найдено")
                 return None, title
-            return convert(resolved[0], resolved[1], tgt), f"{title} {name}"
+            return convert(resolved[0], resolved[1], tgt, self.d), f"{title} {name}"
         if rule.kind == RuleKind.CONSTANT:
-            return constant(rule.param or "", tgt), f"{title} {literal(rule.param or '')}"
+            return constant(rule.param or "", tgt, self.d), f"{title} {literal(rule.param or '')}"
         if rule.kind == RuleKind.FORMULA:
             try:
-                return translate(rule.param or "", resolve), f"{title} {rule.param}"
+                return translate(rule.param or "", resolve, self.d), f"{title} {rule.param}"
             except FormulaError as e:
                 result.stub.append(f"{tgt.name}: формула «{rule.param}» не переводится: {e}")
                 return None, title
@@ -236,11 +240,12 @@ class TransformBuilder:
                 return None, title
             expr, f = resolved
             if f.datatype != "DATS":
-                expr = convert(expr, f, FieldDef(name="", position=0, datatype="DATS", length=8))
+                expr = convert(expr, f, FieldDef(name="", position=0, datatype="DATS", length=8), self.d)
             target_iobj = tgt.info_object or tgt.name
             if target_iobj in TIME_FORMATS:
                 fmt, initial = TIME_FORMATS[target_iobj]
-                return f"coalesce(to_char({expr}, '{fmt}'), '{initial}')", f"{title} {sources} → {target_iobj}"
+                return (f"coalesce({self.d.date_to_text(expr, fmt)}, '{initial}')",
+                        f"{title} {sources} → {target_iobj}")
             if tgt.datatype == "DATS":
                 return expr, f"{title} {sources}"
             result.stub.append(f"{tgt.name}: преобразование времени в {target_iobj} не поддерживается")
@@ -283,7 +288,7 @@ class TransformBuilder:
                 by_target[name] = rule
 
         joins: list[str] = []
-        items = [("load_id", "p_load_id", ""), ("record_no", src.record_no, ""),
+        items = [("load_id", self.d.load_id, ""), ("record_no", src.record_no, ""),
                  ("recordmode", src.recordmode, "")]
         for col in table.columns:
             tgt = col.field
@@ -292,21 +297,21 @@ class TransformBuilder:
             rule = by_target.get(tgt.name)
             if rule is None:
                 if col.not_null:
-                    items.append((col.sql_name, self.tables.rules.initial_value(tgt),
+                    items.append((col.sql_name, self.d.initial_value(self.tables.rules, tgt),
                                   f"{tgt.name}: правила нет, начальное значение ключа"))
                 continue
             expr, note = self._rule_expr(rule, tgt, src, joins, result)
             if expr is None:
                 expr = "NULL"
                 note += " — требует доработки"
-            elif col.not_null and not expr.startswith(("'", "coalesce(", "DATE ")):
-                expr = f"coalesce({expr}, {self.tables.rules.initial_value(tgt)})"
+            elif col.not_null and not expr.startswith(self.d.not_null_prefixes):
+                expr = f"coalesce({expr}, {self.d.initial_value(self.tables.rules, tgt)})"
             items.append((col.sql_name, expr, f"{tgt.name} ← {note}"))
 
         where = list(src.where)
         if dtp and dtp.filter:
             try:
-                where.append(f"({translate(dtp.filter, self._resolver(src))})")
+                where.append(f"({translate(dtp.filter, self._resolver(src), self.d)})")
             except FormulaError as e:
                 result.stub.append(f"фильтр DTP «{dtp.filter}» не переводится: {e}")
 

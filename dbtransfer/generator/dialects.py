@@ -69,6 +69,8 @@ DIALECT_SPECS: dict[str, Dialect] = {
     "postgres": Dialect(
         "postgres", "PostgreSQL 12+", mpp=False, sequence_if_not_exists=True, procedures=True,
         declarative_partitions=True, statement_triggers=True, on_conflict=True, generated_columns=True),
+    # Свой генератор и шаблоны (generator/clickhouse.py, templates/clickhouse/); флаги PostgreSQL к нему не относятся
+    "clickhouse": Dialect("clickhouse", "ClickHouse (Yandex Managed Service for ClickHouse)", mpp=False),
 }
 DIALECTS = tuple(DIALECT_SPECS)
 DEFAULT_DIALECT = "greenplum7"

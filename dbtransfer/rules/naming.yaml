@@ -16,4 +16,5 @@ tables:
   change_log: "{name}_changelog"
   md_attr: "{name}_attr"
   md_text: "{name}_text"
+  work: "{name}_work"     # только ClickHouse: рабочая таблица активации cumulative ADSO
   db_table: "{name}"      # таблица источника при переносе 1:1, {name} — исходное имя в нижнем регистре

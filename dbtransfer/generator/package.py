@@ -48,6 +48,8 @@ class SqlObject:
     has_data: bool = False
     stub: list[str] = field(default_factory=list)  # причины заготовки (ФП-5.9)
     ref: str = ""  # ADSO для функции активации, id трансформации
+    # ClickHouse: вместо функции — запросы, которые прогон выполняет по очереди с параметром {p_load_id:Int64}
+    steps: list[tuple[str, str]] = field(default_factory=list)  # (что делает шаг, SQL без «;»)
 
 
 @dataclass
@@ -104,21 +106,39 @@ class Package:
                 f"-- Модель: {self.model_name or 'без названия'}, хеш {self.model_hash}. "
                 "Файл перезаписывается при генерации, правки вносите в модель и правила.\n")
 
+    @property
+    def clickhouse(self) -> bool:
+        return self.dialect == "clickhouse"
+
     def files(self) -> dict[str, str]:
         result: dict[str, str] = {}
-        for group, (file_name, title) in GROUPS.items():
+        titles = dict(GROUPS)
+        if self.clickhouse:
+            titles["schemas"] = ("010_schemas.sql", "Базы данных слоёв (в ClickHouse схема — это база данных)")
+            titles["activation"] = ("060_activation.sql", "Активация ADSO: пошаговые запросы, выполняются при прогоне")
+            titles["transformations"] = ("070_transformations.sql",
+                                         "Трансформации: пошаговые запросы, выполняются при прогоне")
+        for group, (file_name, title) in titles.items():
             parts = [o.sql for o in self.objects if o.group == group]
             if not parts and group in OPTIONAL_GROUPS:
                 continue
             body = "\n".join(parts) if parts else "-- Объектов нет\n"
             result[file_name] = self.header(title) + "\n" + body
-        deploy = [self.header("Весь пакет одним файлом: psql -f deploy_all.sql"), "\\set ON_ERROR_STOP on\n"]
-        for file_name in sorted(result):
+        schemas = [o.name for o in self.objects if o.kind == "schema"]
+        if self.clickhouse:
+            # Шаги активации и трансформаций — не DDL: при развёртывании их не выполняют
+            deploy = [self.header("DDL одним файлом: clickhouse-client --multiquery --queries-file deploy_all.sql")]
+            steps = {titles[g][0] for g in ("activation", "transformations")}
+            ddl = [name for name in result if name not in steps]
+        else:
+            deploy = [self.header("Весь пакет одним файлом: psql -f deploy_all.sql"), "\\set ON_ERROR_STOP on\n"]
+            ddl = list(result)
+        for file_name in sorted(ddl):
             deploy.append(f"\n-- ===== {file_name} =====\n\n" + result[file_name].split("\n", 3)[3])
         result["deploy_all.sql"] = "".join(deploy)
-        schemas = [o.name for o in self.objects if o.kind == "schema"]
+        drop = "DROP DATABASE IF EXISTS {};\n" if self.clickhouse else "DROP SCHEMA IF EXISTS {} CASCADE;\n"
         result["drop_all.sql"] = (self.header("Удаление всех схем прототипа вместе с данными и журналами")
-                                  + "\n" + "".join(f"DROP SCHEMA IF EXISTS {s} CASCADE;\n" for s in reversed(schemas)))
+                                  + "\n" + "".join(drop.format(s) for s in reversed(schemas)))
         return result
 
     def write(self, out_dir: Path) -> list[Path]:
@@ -324,6 +344,9 @@ def generate(model: Model, rules: TypeRules | None = None, dialect: str = "green
              scope: str | None = None) -> Package:
     """Пакет SQL. Умолчание функции — greenplum (6.x) ради совместимости вызовов; CLI и интерфейс
     по умолчанию берут DEFAULT_DIALECT (greenplum7)."""
+    if dialect == "clickhouse":
+        from dbtransfer.generator.clickhouse import ClickHouseGenerator
+        return ClickHouseGenerator(model, rules or TypeRules.load(), dialect, scope).build()
     return Generator(model, rules or TypeRules.load(), dialect, scope).build()
 
 

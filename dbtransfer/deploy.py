@@ -162,6 +162,9 @@ def deploy(conn: psycopg.Connection, package: Package, recreate: bool = False,
            progress: Callable[[PlanItem], None] | None = None, out_dir: Path | None = None) -> DeployResult:
     """Развернуть пакет. DeployError, если модель изменилась, а --recreate не задан (ФП-6.3).
     С out_dir журнал развёртывания сохраняется и в папку проекта (save_log)."""
+    if package.dialect == "clickhouse":
+        raise DeployError("пакет ClickHouse развёртывается вручную: clickhouse-client --multiquery "
+                          "--queries-file deploy_all.sql; развёртывание из приложения пока только для Greengage")
     plan = make_plan(conn, package, recreate)
     if plan.blocked:
         names = ", ".join(i.obj.name for i in plan.kept_tables)

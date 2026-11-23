@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS {{ t.qname }}
+(
+{% for c in columns %}
+    {{ c.name.ljust(width) }} {{ c.type }} COMMENT {{ c.comment | ch_literal }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+)
+ENGINE = {{ engine }}
+ORDER BY {{ order_by }}
+COMMENT {{ t.comment | ch_literal }};

@@ -1,0 +1,24 @@
+-- Активация ADSO {{ adso }} (cumulative) по ТЗ 4.3.5: показатели загрузки суммируются по ключу
+-- и прибавляются к активным данным, новый ключ вставляется. Строки с нулевыми суммами остаются.
+-- В ClickHouse нет UPDATE … FROM и транзакций: новые значения сначала собираются в рабочей таблице
+-- {{ work }}, затем старые строки удаляются и вставляются новые. Шаги выполняются по очереди
+-- с параметром {p_load_id:Int64}; после сбоя активацию можно повторить с первого шага,
+-- пока не выполнен шаг удаления.
+-- Шаг: очистка рабочей таблицы
+TRUNCATE TABLE IF EXISTS {{ work }};
+-- Шаг: новые значения: сумма загрузки плюс активные данные; _hit = 1 — ключ уже был
+INSERT INTO {{ work }} (_hit, {{ columns | join(", ") }})
+SELECT coalesce(a._hit, 0), {{ merged | join(", ") }}
+FROM ({{ grouped }}) g
+LEFT JOIN (SELECT {{ columns | join(", ") }}, 1 AS _hit FROM {{ active }}) a
+  ON {{ join_ag }};
+-- Шаг: удаление изменяемых строк активных данных (lightweight DELETE)
+DELETE FROM {{ active }}
+WHERE ({{ key_list }}) IN (SELECT {{ key_list }} FROM {{ work }} WHERE _hit = 1);
+-- Шаг: запись новых значений в активные данные
+INSERT INTO {{ active }} ({{ columns | join(", ") }})
+SELECT {{ columns | join(", ") }}
+FROM {{ work }};
+-- Шаг: итог для журнала загрузок: новых и изменённых строк
+SELECT countIf(_hit = 0) AS new_rows, countIf(_hit = 1) AS changed_rows
+FROM {{ work }};

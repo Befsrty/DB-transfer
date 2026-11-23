@@ -392,7 +392,12 @@ def tab_sql(project: Project, model: Model) -> None:
         return
     counts = package.counts()
     st.caption(f"Схем {counts.get('schema', 0)}, таблиц {counts.get('table', 0)}, функций {counts.get('function', 0)}, "
-               f"строк SQL {package.sql_lines}")
+               + (f"пошаговых скриптов {counts['steps']}, " if counts.get("steps") else "")
+               + f"строк SQL {package.sql_lines}")
+    if package.clickhouse:
+        st.info("ClickHouse: пакет только генерируется. Развёртывание и прогон из приложения пока работают "
+                "с Greengage и PostgreSQL; DDL можно выполнить вручную: clickhouse-client --multiquery "
+                "--queries-file deploy_all.sql")
     for o in package.stubs:
         st.warning(f"Заготовка, требует ручной доработки: {o.bw_object} ({'; '.join(o.stub)})")
     options = ["Весь пакет"] + sorted({o.bw_object for o in package.objects if o.bw_object})

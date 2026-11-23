@@ -26,6 +26,7 @@ dbtransfer = "dbtransfer.cli:app"
 
 [dependency-groups]
 dev = [
+    "clickhouse-connect>=0.8",
     "pytest>=8",
     "pytest-cov>=5",
     "ruff>=0.6",
@@ -40,8 +41,11 @@ packages = ["dbtransfer"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["db: интеграционные тесты, нужен запущенный Greengage (docker compose up -d) или PostgreSQL"]
-addopts = "-m 'not db'"
+markers = [
+    "db: интеграционные тесты, нужен запущенный Greengage (docker compose up -d) или PostgreSQL",
+    "clickhouse: интеграционные тесты пакета ClickHouse, нужен сервер ClickHouse (HTTP, порт 8123)",
+]
+addopts = "-m 'not db and not clickhouse'"
 
 [tool.ruff]
 line-length = 120
