@@ -67,7 +67,8 @@ MSSQL_QUERIES = {
              "FROM sys.views v JOIN sys.schemas s ON s.schema_id = v.schema_id "
              "JOIN sys.sql_modules m ON m.object_id = v.object_id WHERE s.name IN ({schemas})",
     "ROUTINES": "SELECT s.name AS ROUTINE_SCHEMA, o.name AS ROUTINE_NAME, o.type_desc AS ROUTINE_TYPE, "
-                "LEN(m.definition) - LEN(REPLACE(m.definition, CHAR(10), '')) + 1 AS LINES "
+                "LEN(m.definition) - LEN(REPLACE(m.definition, CHAR(10), '')) + 1 AS LINES, "
+                "m.definition AS DEFINITION "
                 "FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id "
                 "JOIN sys.sql_modules m ON m.object_id = o.object_id "
                 "WHERE o.type IN ('P', 'FN', 'IF', 'TF', 'TR') AND s.name IN ({schemas})",
@@ -310,7 +311,7 @@ def catalog_from(files: dict[str, TableFile], keep) -> Catalog:
         catalog.objects.append(SourceObject(schema=r["ROUTINE_SCHEMA"], name=r["ROUTINE_NAME"],
                                             type=ObjectType.DB_ROUTINE,
                                             label=ROUTINE_LABELS.get(kind, kind.lower() or "код T-SQL"),
-                                            lines=to_int(r.get("LINES"))))
+                                            lines=to_int(r.get("LINES")), text=r.get("DEFINITION") or ""))
     if legacy:
         catalog.notes.append(
             f"Колонки char, varchar и text в collation {', '.join(sorted(legacy))} хранятся в однобайтовой "

@@ -335,6 +335,13 @@ def tab_complexity(project: Project, model: Model, report: Report) -> None:
               delta_color="off")
     c2.metric("Уровень 2 / уровень 3", f"{report.by_level[2]} / {report.by_level[3]}")
     c3.metric("Ручная работа по нормам", f"{report.hours:g} ч")
+    if report.translation is not None:
+        tr = report.translation
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Код, переведённый автоматически", f"{tr.auto_share:.0%}", f"{round(tr.lines_auto)} из "
+                  f"{tr.lines} строк", delta_color="off")
+        d2.metric("Представлений автоматически", f"{tr.views_auto} из {tr.views}")
+        d3.metric("Ручная работа по коду", f"{tr.hours_left:g} ч", f"было {tr.hours_manual:g} ч", delta_color="off")
     counts: dict[str, list[int]] = {}
     for a in report.objects + report.unparsed:
         counts.setdefault(a.type, [0, 0, 0])[a.level - 1] += 1

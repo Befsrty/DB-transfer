@@ -162,3 +162,73 @@ jobs:
         run: curl -s -u default:student "http://localhost:8123/?query=SELECT+version()"
       - name: Интеграционные тесты ClickHouse
         run: uv run pytest -m clickhouse -v
+
+  # Переводчик SQL (dbtransfer.translate): представления и процедуры Oracle и MS SQL Server создаются в источнике,
+  # переводятся, разворачиваются в Greengage и сравниваются по строкам с источником. Teradata — по эталонным
+  # запросам на самой цели (публичного образа Teradata нет). Oracle — Oracle Database Free 23, MS SQL — 2022.
+  translate:
+    name: translate oracle/mssql -> greengage ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["7.5.1", "6.32.0"]
+    services:
+      greengage:
+        image: woblerr/greengage:${{ matrix.version }}
+        options: --hostname greengage
+        env:
+          GREENPLUM_PASSWORD: student
+          GREENPLUM_DATABASE_NAME: demo
+        ports:
+          - 5432:5432
+      oracle:
+        image: gvenzl/oracle-free:23-slim-faststart
+        env:
+          ORACLE_PASSWORD: student
+          APP_USER: sales
+          APP_USER_PASSWORD: student
+        ports:
+          - 1521:1521
+        options: >-
+          --health-cmd healthcheck.sh --health-interval 10s --health-timeout 5s --health-retries 30
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Student_123
+        ports:
+          - 1433:1433
+    env:
+      DBT_DB_HOST: localhost
+      DBT_DB_PORT: "5432"
+      DBT_DB_NAME: demo
+      DBT_DB_USER: gpadmin
+      DBT_DB_PASSWORD: student
+      DBT_ORACLE_URL: oracle://sales:student@localhost:1521/FREEPDB1
+      DBT_MSSQL_URL: mssql://sa:Student_123@localhost:1433/master
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Установка зависимостей
+        run: uv sync --locked --extra oracle --extra mssql
+      - name: Ожидание готовности Greengage и MS SQL Server
+        run: |
+          for i in $(seq 1 60); do
+            if PGPASSWORD=student psql -h localhost -U gpadmin -d demo -tAc "select 1" >/dev/null 2>&1; then
+              echo "Greengage готов"; break
+            fi
+            if [ "$i" = 60 ]; then echo "Greengage не поднялся за 5 минут"; exit 1; fi
+            sleep 5
+          done
+          for i in $(seq 1 60); do
+            if uv run python -c "from dbtransfer.importers.mssql_dict import connect; connect('$DBT_MSSQL_URL').close()" \
+                >/dev/null 2>&1; then
+              echo "MS SQL Server готов"; break
+            fi
+            if [ "$i" = 60 ]; then echo "MS SQL Server не поднялся за 5 минут"; exit 1; fi
+            sleep 5
+          done
+      - name: Перевод и сравнение с источниками
+        run: uv run pytest -m db -v -s tests/integration/test_translate_db.py

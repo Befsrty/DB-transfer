@@ -95,6 +95,7 @@ def write_complexity(model: Model, report: Report, path: Path, sql_lines: int | 
         ["Объектов уровня 1 (переводятся автоматически)", f"{report.by_level[1]} из {report.total}",
          f"{report.level1_share:.0%}"],
         ["Ручная работа по нормам effort_norms.yaml, часов", f"{report.hours:g}", ""],
+        *_translation_metrics(report),
         ["Сгенерировано строк SQL", sql_lines if sql_lines is not None else "нет данных", ""],
         ["Сгенерировано объектов БД (схемы, таблицы, функции)", db_objects if db_objects is not None else "нет данных",
          ""],
@@ -125,3 +126,22 @@ def write_complexity(model: Model, report: Report, path: Path, sql_lines: int | 
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path
+
+
+def _translation_metrics(report: Report) -> list[list]:
+    """Переводчик SQL: доля кода, переведённого автоматически, и остаток ручной работы."""
+    s = report.translation
+    if s is None:
+        return []
+    rows = [["Переводчик SQL: код представлений и процедур, переведённый автоматически (по строкам)",
+             f"{round(s.lines_auto)} из {s.lines}", f"{s.auto_share:.0%}"],
+            ["Ручная работа по представлениям и процедурам без переводчика, часов", f"{s.hours_manual:g}", ""],
+            ["Ручная работа по представлениям и процедурам после перевода, часов", f"{s.hours_left:g}",
+             f"{s.hours_left / s.hours_manual:.0%}" if s.hours_manual else ""]]
+    if s.views:
+        rows.append(["Представлений переведено автоматически", f"{s.views_auto} из {s.views}",
+                     f"{s.views_share:.0%}"])
+    if s.routines:
+        rows.append(["Операторов процедур переведено без TODO", f"{s.routine_statements_auto} из "
+                     f"{s.routine_statements}", f"{s.statements_share:.0%}"])
+    return rows

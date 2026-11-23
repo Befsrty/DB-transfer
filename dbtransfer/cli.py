@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -195,6 +196,8 @@ def report_cmd(project: ProjectOption = None) -> None:
     typer.echo(f"Объектов: {report.total}; уровень 1: {report.by_level[1]} ({report.level1_share:.0%}), "
                f"уровень 2: {report.by_level[2]}, уровень 3: {report.by_level[3]}")
     typer.echo(f"Ручная работа по нормам: {report.hours:g} ч")
+    for line in translation_lines(report):
+        typer.echo(line)
     for r in report.routines:
         typer.echo(f"  Рутина: {r.kind}, {r.lines} строк, {r.source} → {r.target}")
     typer.echo(f"Отчёт: {path}")
@@ -281,7 +284,70 @@ def generate_cmd(
                     fg=typer.colors.YELLOW)
     for w in package.warnings:
         typer.secho(f"  {w}", fg=typer.colors.YELLOW)
+    if package.translations:
+        auto = sum(1 for t in package.translations if t.type.value == "VIEW" and t.auto)
+        views = sum(1 for t in package.translations if t.type.value == "VIEW")
+        routines = len(package.translations) - views
+        typer.echo(f"Представлений переведено автоматически: {auto} из {views} (080_views.sql); черновики: "
+                   f"drafts_views.sql — {views - auto}, drafts_routines.sql — процедур {routines}")
     typer.echo(f"Пакет SQL: {out} (всё одним файлом: deploy_all.sql)")
+
+
+def translation_lines(report) -> list[str]:
+    """Строки сводки переводчика SQL для отчёта о сложности."""
+    s = report.translation
+    if s is None:
+        return []
+    lines = [f"Переводчик SQL ({s.dialect}): доля кода, переведённого автоматически, {s.auto_share:.0%}; "
+             f"ручная работа по представлениям и процедурам {s.hours_manual:g} ч → {s.hours_left:g} ч"]
+    if s.views:
+        lines.append(f"  Представлений: {s.views}, автоматически {s.views_auto} ({s.views_share:.0%}), "
+                     f"черновиков {s.views_draft}")
+    if s.routines:
+        lines.append(f"  Процедур и функций: {s.routines}, операторов без TODO {s.routine_statements_auto} из "
+                     f"{s.routine_statements} ({s.statements_share:.0%}), пометок TODO {s.todos}")
+    if s.no_text:
+        lines.append(f"  Без текста в выгрузке (переводить нечего): {s.no_text}")
+    return lines
+
+
+@app.command("translate")
+def translate_cmd(
+    file: Annotated[Path, typer.Argument(help="Файл с запросом, представлением или процедурой.")],
+    source: Annotated[str, typer.Option("--from", help="Диалект источника: oracle, tsql, teradata.")] = "oracle",
+    dialect: Annotated[str, typer.Option(help=f"Диалект цели: {', '.join(DIALECTS)}.")] = DEFAULT_DIALECT,
+) -> None:
+    """Перевести один файл SQL (запрос, CREATE VIEW, процедуру) без проекта: результат и TODO на экран.
+    Для всего проекта перевод делает dbtransfer generate (080_views.sql, drafts_*.sql)."""
+    from dbtransfer.model import Model, ObjectType, OtherObject, SourceKind
+    from dbtransfer.translate import translate_query
+    from dbtransfer.translate.routines import translate_routines
+    from dbtransfer.translate.views import split_view
+
+    kinds = {"oracle": SourceKind.ORACLE, "tsql": SourceKind.MSSQL, "teradata": SourceKind.TERADATA}
+    if source not in kinds:
+        raise _fail(f"источник {source} неизвестен, допустимо: {', '.join(kinds)}")
+    if dialect not in DIALECTS:
+        raise _fail(f"диалект {dialect} неизвестен, допустимо: {', '.join(DIALECTS)}")
+    text = file.read_text(encoding="utf-8-sig")
+    if re.match(r"^\s*(CREATE\s+(OR\s+(REPLACE|ALTER)\s+)?|REPLACE\s+)?(PROC|PROCEDURE|FUNCTION|MACRO|PACKAGE)\b",
+                text, re.I):
+        model = Model(source_kind=kinds[source])
+        model.others.append(OtherObject(type=ObjectType.DB_ROUTINE, name=f"SRC.{file.stem}", text=text,
+                                        schema_name="SRC"))
+        results = translate_routines(model, dialect)
+        for r in results:
+            typer.echo(r.sql)
+        todos = [t for r in results for t in r.todos]
+    else:
+        query, _ = split_view(text)
+        r = translate_query(query, source, dialect)
+        if r.error:
+            raise _fail(r.error)
+        typer.echo(r.sql + ";")
+        todos = r.todos
+    for t in todos:
+        typer.secho(f"TODO: {t}", fg=typer.colors.YELLOW)
 
 
 EnvOption = Annotated[Path, typer.Option("--env-file", help="Файл с параметрами подключения.")]

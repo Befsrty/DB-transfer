@@ -403,7 +403,8 @@ def build_model(catalog: Catalog, files: dict[str, TableFile], kind: SourceKind,
         related = _related(o.text, by_name, o.schema, mode) if o.text else []
         if related:
             info += ", таблицы: " + ", ".join(r.name for r in related)
-        model.others.append(OtherObject(type=o.type, name=o.full_name, related=related, info=info, lines=o.lines))
+        model.others.append(OtherObject(type=o.type, name=o.full_name, related=related, info=info, lines=o.lines,
+                                        text=o.text or "", schema_name=o.schema))
     for note in catalog.notes:
         model.issue(Severity.INFO, note)
     for fk in catalog.foreign_keys:

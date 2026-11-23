@@ -108,7 +108,7 @@ tables:
 
   ROUTINES:
     group: Код
-    purpose: Процедуры, функции и триггеры с числом строк кода (sys.objects, sys.sql_modules)
+    purpose: Процедуры, функции и триггеры с числом строк и текстом кода (sys.objects, sys.sql_modules)
     level: "3"
     required: false
     hypothesis: false
@@ -118,6 +118,7 @@ tables:
       ROUTINE_NAME: {required: true}
       ROUTINE_TYPE: {required: true}
       LINES: {}
+      DEFINITION: {}  # текст процедуры: по нему переводчик делает черновик PL/pgSQL
 
   PARTITIONS:
     group: Секционирование

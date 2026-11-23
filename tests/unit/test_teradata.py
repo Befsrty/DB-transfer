@@ -305,9 +305,11 @@ def test_native_conversion(td):
 
 def test_assessment(td):
     rows = {a.name: a for a in assess(td).objects}
-    assert rows["SALES.spRecalc"].type == "Процедура, функция, триггер" and rows["SALES.spRecalc"].level == 3
+    # Процедура SPL переведена черновиком PL/pgSQL (уровень 2), представление с QUALIFY — автоматически
+    assert rows["SALES.spRecalc"].type == "Процедура, функция, триггер" and rows["SALES.spRecalc"].level == 2
     assert "PL/pgSQL" in rows["SALES.spRecalc"].reason
-    assert rows["SALES.vLastOrder"].level == 2 and "QUALIFY" in rows["SALES.vLastOrder"].reason
+    assert rows["SALES.vLastOrder"].level == 1 and "QUALIFY" in rows["SALES.vLastOrder"].reason
+    assert rows["SALES.trgOrders"].level == 3
     assert rows["load_orders.bteq"].type == "Скрипт загрузки" and rows["load_orders.bteq"].hours == 6
 
 

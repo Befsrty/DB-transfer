@@ -122,7 +122,7 @@ tables:
 
   ALL_SOURCE:
     group: Код
-    purpose: Число строк кода PL/SQL по объектам (запрос с GROUP BY, не всё представление)
+    purpose: Код PL/SQL по строкам (LINE, TEXT) для черновиков PL/pgSQL; старая выгрузка с GROUP BY и LINES даёт только число строк
     level: "3"
     required: false
     hypothesis: false
@@ -131,7 +131,9 @@ tables:
       OWNER: {required: true}
       NAME: {required: true}
       TYPE: {required: true}
-      LINES: {required: true}
+      LINE: {}
+      TEXT: {}
+      LINES: {}
 
   ALL_PART_TABLES:
     group: Секционирование

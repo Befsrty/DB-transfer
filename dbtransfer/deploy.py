@@ -75,6 +75,8 @@ class DeployResult:
     error: str = ""
     items: list[PlanItem] = field(default_factory=list)
     log_file: Path | None = None  # копия журнала в out/
+    # Переведённые представления, которые база не приняла: развёртывание остальных объектов прошло
+    view_errors: list[PlanItem] = field(default_factory=list)
 
 
 def _exists(cur: psycopg.Cursor, obj: SqlObject) -> bool:
@@ -106,7 +108,7 @@ def make_plan(conn: psycopg.Connection, package: Package, recreate: bool = False
     with conn.cursor() as cur:
         for obj in package.objects:
             exists = _exists(cur, obj)
-            if obj.kind == "function":
+            if obj.kind in ("function", "view"):
                 action = REPLACE if exists else CREATE
             elif not exists:
                 action = CREATE
@@ -158,6 +160,20 @@ def save_log(result: DeployResult, out_dir: Path, now: datetime | None = None) -
     return path
 
 
+def _deploy_view(cur: psycopg.Cursor, item: PlanItem) -> None:
+    """Переведённое представление: ошибка не отменяет развёртывание таблиц и функций, а записывается
+    в журнал. Представление остаётся в черновиках, его правят вручную."""
+    cur.execute("SAVEPOINT dbt_view")
+    try:
+        cur.execute(item.obj.sql)
+    except psycopg.Error as e:
+        cur.execute("ROLLBACK TO SAVEPOINT dbt_view")
+        item.status, item.message = "error", (e.diag.message_primary or str(e)).strip()
+    else:
+        cur.execute("RELEASE SAVEPOINT dbt_view")
+        item.status = "ok"
+
+
 def deploy(conn: psycopg.Connection, package: Package, recreate: bool = False,
            progress: Callable[[PlanItem], None] | None = None, out_dir: Path | None = None) -> DeployResult:
     """Развернуть пакет. DeployError, если модель изменилась, а --recreate не задан (ФП-6.3).
@@ -180,8 +196,11 @@ def deploy(conn: psycopg.Connection, package: Package, recreate: bool = False,
                 _drop_data_schemas(cur, package)
             for item in plan.items:
                 failed = item
-                cur.execute(item.obj.sql)
-                item.status = "ok"
+                if item.obj.kind == "view":
+                    _deploy_view(cur, item)
+                else:
+                    cur.execute(item.obj.sql)
+                    item.status = "ok"
                 if progress:
                     progress(item)
         conn.commit()
@@ -198,6 +217,7 @@ def deploy(conn: psycopg.Connection, package: Package, recreate: bool = False,
         result = DeployResult(deploy_id, plan, False, f"ошибка{where}: {message}", plan.items)
     else:
         result = DeployResult(_write_log(conn, package, plan, user), plan, True, "", plan.items)
+        result.view_errors = [i for i in plan.items if i.obj.kind == "view" and i.status == "error"]
     if out_dir is not None:
         result.log_file = save_log(result, out_dir)
     return result
