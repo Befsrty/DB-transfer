@@ -78,7 +78,7 @@ def test_object_card(model, report, rules):
     fields = cards.object_fields(model, rules, adso)
     keys = set(fields.loc[fields["Ключ"] == "да", "Поле"])
     assert keys == {"0SOLD_TO", "0CALMONTH", "0DOC_CURRCY", "0SALES_UNIT"}
-    assert fields.set_index("Поле").loc["0NETVAL_INV", "Тип ADB"] == "numeric(17,2)"
+    assert fields.set_index("Поле").loc["0NETVAL_INV", "Тип ADB"] == "numeric(20,3)"
     tables = cards.object_tables(model, rules, adso)
     assert list(tables["Таблица ADB"]) == ["dbt_stg.zsd_a02_inbound", "dbt_mart.zsd_a02_active"]
     assert cards.assessment_of(report, "ZSD_A02")[0] == 1

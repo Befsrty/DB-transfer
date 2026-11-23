@@ -324,3 +324,14 @@ tables:
       OBJVERS: {required: true}
       TYPE: {required: true}
       VARIANTE: {required: true}
+
+  TCURX:
+    group: Валюты
+    purpose: Число знаков после запятой у валют, если оно не 2 (JPY 0, KWD 3); для пересчёта сумм CURR
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      CURRKEY: {required: true}
+      CURRDEC: {required: true}

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from dbtransfer import currency as cur
 from dbtransfer.config import RULES_DIR
 from dbtransfer.model import FieldDef, InfoObject, InfoObjectKind, Model
 
@@ -40,8 +41,12 @@ class TypeRules:
     overrides: dict[str, dict] = field(default_factory=dict)
     # Правила для ClickHouse: второй шаг перевода типов, движки таблиц (секция clickhouse в type_rules.yaml)
     clickhouse: dict = field(default_factory=dict)
+    # Суммы CURR: формат хранения, входящих файлов и эталона, знаки валют (секция currency)
+    currency: dict = field(default_factory=dict)
     # Типы, которых нет в правилах: тип -> поля, для предупреждений генерации
     unknown: dict[str, list[str]] = field(default_factory=dict)
+    currency_decimals: dict[str, int] = field(default_factory=dict)
+    currency_from_tcurx: bool = False
 
     @classmethod
     def load(cls, project_dir: Path | None = None) -> TypeRules:
@@ -55,18 +60,59 @@ class TypeRules:
                 raise RulesError(f"{path}: файл не читается: {e}") from e
             raw = _merge(raw, extra)
         rules = cls(**{k: v if v is not None else {} for k, v in raw.items()})
+        try:
+            cur.check_format(rules.currency_store, "currency.store")
+            cur.check_format(rules.currency.get("input", cur.INTERNAL), "currency.input")
+            cur.check_format(rules.currency.get("input_file", cur.EXTERNAL), "currency.input_file")
+            cur.check_format(rules.etalon_format, "currency.etalon")
+            for obj, spec in rules.overrides.items():
+                if isinstance(spec, dict) and "currency_input" in spec:
+                    cur.check_format(spec["currency_input"], f"overrides.{obj}.currency_input")
+        except cur.CurrencyError as e:
+            raise RulesError(str(e)) from e
+        rules.bind(None)
         for role, kind in rules.storage.items():
             if kind not in STORAGE_KINDS:
                 raise RulesError(f"type_rules.yaml: хранение «{kind}» для {role} неизвестно, "
                                  f"допустимо: {', '.join(STORAGE_KINDS)}")
         return rules
 
+    # --- суммы CURR ---
+
+    def bind(self, model: Model | None) -> TypeRules:
+        """Знаки валют модели (TCURX из выгрузки), а без неё — из type_rules.yaml."""
+        self.currency_decimals = cur.decimals_of(model, self.currency.get("decimals") or {})
+        self.currency_from_tcurx = bool(model is not None and model.currency_decimals)
+        return self
+
+    @property
+    def currency_store(self) -> str:
+        return self.currency.get("store", cur.INTERNAL)
+
+    @property
+    def etalon_format(self) -> str:
+        return self.currency.get("etalon", self.currency_store)
+
+    def currency_input(self, obj: str, flat_file: bool = False) -> str:
+        """Формат сумм во входящем файле объекта: overrides.<объект>.currency_input, иначе input / input_file."""
+        own = self.overrides.get(obj, {}).get("currency_input") if isinstance(self.overrides.get(obj), dict) else None
+        if own:
+            return own
+        if flat_file:
+            return self.currency.get("input_file", self.currency.get("input", self.currency_store))
+        return self.currency.get("input", self.currency_store)
+
     def column_type(self, f: FieldDef, owner: str = "") -> str:
         template = self.types.get(f.datatype)
         if template is None or ("{length}" in template and f.length <= 0):
             self.unknown.setdefault(f.datatype or "(пусто)", []).append(f"{owner}.{f.name}" if owner else f.name)
             return self.default_type
-        return template.format(length=f.length, decimals=f.decimals)
+        length, decimals = f.length, f.decimals
+        if f.datatype == "CURR" and self.currency_store == cur.EXTERNAL:
+            # Настоящая сумма JPY в 100 раз больше внутренней, KWD — на знак длиннее после запятой
+            whole, frac = cur.widening(self.currency_decimals)
+            length, decimals = length + whole + frac, decimals + frac
+        return template.format(length=length, decimals=decimals)
 
     def initial_value(self, f: FieldDef) -> str:
         """Начальное значение BW как литерал SQL: для ключевых полей вместо NULL (4.3.3)."""

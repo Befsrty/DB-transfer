@@ -70,7 +70,7 @@ def test_check_and_convert(model):
     assert [p for _, p in check_sql(cols["s_ord_item"], "v")] == ["не только цифры (NUMC)", "длиннее 6 символов"]
     assert [p for _, p in check_sql(cols["doc_number"], "v")] == ["длиннее 10 символов"]
     assert convert_sql(cols["netval"], "v", RULES) == \
-        "nullif(replace(replace(btrim(v), ' ', ''), ',', '.'), '')::numeric(17,2)"
+        "nullif(replace(replace(btrim(v), ' ', ''), ',', '.'), '')::numeric(20,3)"
     assert "THEN NULL" in convert_sql(cols["calday"], "v", RULES)
     assert convert_sql(cols["doc_number"], "v", RULES) == "v"
     md = resolve_target(model, RULES, "0SOLD_TO", ["LANGU"])

@@ -78,7 +78,7 @@ def test_tables_engines_and_keys(package):
     assert "ORDER BY (doc_number, s_ord_item)" in ddl["dbt_dwh.zsd_a01_active"]
     assert "ORDER BY (load_id, record_no)" in ddl["dbt_stg.zsd_a01_inbound"]
     a01 = ddl["dbt_dwh.zsd_a01_active"]
-    assert "s_ord_item String COMMENT" in a01 and "netval_inv Nullable(Decimal(17,2))" in a01
+    assert "s_ord_item String COMMENT" in a01 and "netval_inv Nullable(Decimal(20,3))" in a01
     assert "calday     Nullable(Date32)" in a01
 
 
@@ -153,7 +153,7 @@ def test_project_rules_override(model, tmp_path):
     package = generate(model, TypeRules.load(tmp_path), "clickhouse")
     a01 = tables(package.files()["050_adso.sql"])["dbt_dwh.zsd_a01_active"]
     assert "doc_number LowCardinality(String)" in a01 and "ENGINE = ReplacingMergeTree" in a01
-    assert "Decimal(17,2)" in a01  # прочие типы из правил по умолчанию
+    assert "Decimal(20,3)" in a01  # прочие типы из правил по умолчанию
 
 
 @pytest.mark.parametrize("source", ["oracle", "mssql"])

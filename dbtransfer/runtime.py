@@ -19,7 +19,7 @@ from pathlib import Path
 import networkx as nx
 import psycopg
 
-from dbtransfer import naming
+from dbtransfer import currency, naming
 from dbtransfer.analysis.graph import build_graph, node, scope_from
 from dbtransfer.generator import Package, TypeRules
 from dbtransfer.generator.sql import literal, qualified
@@ -219,13 +219,16 @@ def check_sql(col: Column, src: str) -> list[tuple[str, str]]:
     return checks
 
 
-def convert_sql(col: Column, src: str, rules: TypeRules) -> str:
-    """Значение сырой колонки, приведённое к типу колонки таблицы."""
+def convert_sql(col: Column, src: str, rules: TypeRules, factor: str | None = None) -> str:
+    """Значение сырой колонки, приведённое к типу колонки таблицы.
+    factor — множитель суммы CURR (выражение SQL), когда формат сумм файла и базы различается."""
     f = _f(col)
     t = _trim(src)
     key = col.not_null
     if f.datatype in NUMERIC_TYPES - {"INT1", "INT2", "INT4", "INT8"}:
         expr = f"nullif(replace(replace({t}, ' ', ''), ',', '.'), '')::{col.type}"
+        if factor:
+            expr = f"({expr} * {factor})::{col.type}"
     elif f.datatype in ("INT1", "INT2", "INT4", "INT8"):
         expr = f"nullif(regexp_replace({t}, '[.]0*$', ''), '')::{col.type}"
     elif f.datatype == "DATS":
@@ -245,6 +248,40 @@ def convert_sql(col: Column, src: str, rules: TypeRules) -> str:
     else:
         return src  # CHAR и прочие строки как есть, пустое значение — пустая строка, как в BW
     return f"coalesce({expr}, {rules.initial_value(f)})" if key else expr
+
+
+def currency_factors(model: Model, rules: TypeRules, target: LoadTarget, columns: list[Column]
+                     ) -> tuple[dict[str, str], list[str]]:
+    """Множители сумм CURR файла (колонка -> выражение SQL над сырой таблицей r) и предупреждения."""
+    rules.bind(model)
+    ds = model.find_datasource(target.object_name) if target.kind == "datasource" else None
+    source = rules.currency_input(target.object_name, flat_file=bool(ds and ds.is_flat_file))
+    store = rules.currency_store
+    amounts = [c for c in columns if c.field is not None and c.field.datatype == "CURR"]
+    if source == store or not amounts:
+        return {}, []
+    fields = [c.field for c in target.table.columns if c.field is not None]
+    by_field = {c.field.name: c for c in columns if c.field is not None}
+    factors, warnings = {}, []
+    for c in amounts:
+        ref = currency.currency_ref(model, fields, c.field)
+        if ref.fixed:
+            d = rules.currency_decimals.get(ref.fixed, currency.SAP_DECIMALS)
+            f = currency.factor(d, source, store)
+            if f != 1:
+                factors[c.name] = format(f.normalize(), "f")
+        elif ref.field and ref.field in by_field:
+            expr = currency.factor_sql(f"r.{by_field[ref.field].sql_name}", rules.currency_decimals, source, store)
+            if expr:
+                factors[c.name] = expr
+        else:
+            what = "в настоящую сумму" if store == currency.EXTERNAL else "во внутренний формат BW"
+            warnings.append(f"Сумма {c.field.name}: в файле не найдена колонка валюты, сумма загружена "
+                            f"без пересчёта {what}")
+    if factors and not rules.currency_from_tcurx:
+        warnings.append("В выгрузке нет TCURX: число знаков валют взято из type_rules.yaml (currency.decimals). "
+                        "Выгрузите TCURX, если в системе оно настроено иначе")
+    return factors, warnings
 
 
 def _row_errors(header: list[str], rows: list[tuple[int, list[str]]]) -> list[RowError]:
@@ -308,7 +345,8 @@ def load_file(conn: psycopg.Connection, model: Model, rules: TypeRules, object_n
 
             # Шаг 3: перенос в типизированную таблицу
             load_id = cur.execute(f"SELECT nextval('{meta}.load_id_seq')").fetchone()[0]
-            exprs = [convert_sql(c, f"r.{c.sql_name}", rules) for c in columns]
+            factors, warnings = currency_factors(model, rules, target, columns)
+            exprs = [convert_sql(c, f"r.{c.sql_name}", rules, factors.get(c.name)) for c in columns]
             names = [c.sql_name for c in columns]
             if target.with_load_id:
                 names = ["load_id", "record_no", *names]
@@ -347,7 +385,7 @@ def load_file(conn: psycopg.Connection, model: Model, rules: TypeRules, object_n
     except LoadError:
         conn.rollback()
         raise
-    return LoadResult(load_id, target.object_name, table.qname, count, path.name)
+    return LoadResult(load_id, target.object_name, table.qname, count, path.name, warnings)
 
 
 # --- прогон (ФП-7.3) ---
