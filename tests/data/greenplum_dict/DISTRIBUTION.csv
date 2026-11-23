@@ -1,0 +1,5 @@
+TABLE_SCHEMA,TABLE_NAME,DISTRIBUTED_BY
+sales,orders,DISTRIBUTED BY (order_id)
+sales,order_lines,DISTRIBUTED BY (order_id cdbhash_int8_ops)
+sales,fact_sales,DISTRIBUTED RANDOMLY
+sales,regions,DISTRIBUTED REPLICATED

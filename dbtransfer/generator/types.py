@@ -62,6 +62,8 @@ class TypeRules:
         return rules
 
     def column_type(self, f: FieldDef, owner: str = "") -> str:
+        if f.target_type:  # источник той же семьи (Greenplum): тип как есть
+            return f.target_type
         template = self.types.get(f.datatype)
         if template is None or ("{length}" in template and f.length <= 0):
             self.unknown.setdefault(f.datatype or "(пусто)", []).append(f"{owner}.{f.name}" if owner else f.name)

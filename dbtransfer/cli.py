@@ -19,6 +19,7 @@ from dbtransfer.config import load_db_settings, source_tables
 from dbtransfer.db import DbError, check_connection, connect, server_dialect
 from dbtransfer.deploy import ACTION_TEXT, DeployError, deploy
 from dbtransfer.generator import DEFAULT_DIALECT, DIALECTS, Package, RulesError, TypeRules, generate
+from dbtransfer.importers import greenplum
 from dbtransfer.importers.bw_csv import ImportFailed
 from dbtransfer.importers.sources import SOURCES, export_help, import_model, source_kind
 from dbtransfer.model import Model, Severity
@@ -26,6 +27,7 @@ from dbtransfer.project import Project, ProjectError, find_project, init_project
 from dbtransfer.reconcile import STATUSES, ReconcileError, reconcile
 from dbtransfer.runtime import LoadError, RunError, load_file, rollback_load, run_load
 from dbtransfer.scenario import ScenarioError, run_demo
+from dbtransfer.transfer import TransferError, compare_tables, export_data, transfer_data
 
 # Коды возврата по ТЗ: 0 успех, 1 ошибка данных, 2 ошибка подключения или окружения
 EXIT_DATA_ERROR = 1
@@ -95,7 +97,7 @@ SourceOption = Annotated[
 
 @app.command("tables")
 def tables_cmd(source: SourceOption = "bw") -> None:
-    """Список таблиц для выгрузки (BW через SE16, словарь Oracle или MS SQL Server) и обязательные поля."""
+    """Список таблиц для выгрузки (BW через SE16, словарь Oracle, MS SQL Server, каталог Greenplum)."""
     try:
         specs = source_tables(source_kind(source))
     except ImportFailed as e:
@@ -121,12 +123,13 @@ def import_cmd(
     language: Annotated[str, typer.Option(help="Язык текстов SAP: R русский, E английский.")] = "R",
     source: SourceOption = "bw",
     url: Annotated[str | None, typer.Option(
-        help="Oracle и MS SQL Server: подключение вместо папки, oracle://user@host:1521/service или "
-             "mssql://user@host:1433/база. Пароль — из переменной DBT_SRC_PASSWORD.")] = None,
+        help="Oracle, MS SQL Server и Greenplum: подключение вместо папки, oracle://user@host:1521/service, "
+             "mssql://user@host:1433/база или greenplum://user@host:5432/база. "
+             "Пароль — из переменной DBT_SRC_PASSWORD.")] = None,
     schemas: Annotated[str | None, typer.Option(
-        help="Oracle и MS SQL Server: схемы через запятую. По умолчанию все, кроме служебных.")] = None,
+        help="Oracle, MS SQL Server и Greenplum: схемы через запятую. По умолчанию все, кроме служебных.")] = None,
     target: Annotated[str, typer.Option(
-        help="Oracle и MS SQL Server: table — таблица 1:1 с исходным именем (по умолчанию), "
+        help="Oracle, MS SQL Server и Greenplum: table — таблица 1:1 с исходным именем (по умолчанию), "
              "adso — поток как в BW: входная таблица, ADSO, трансформация, активация.")] = "table",
     system: Annotated[str | None, typer.Option(
         help="Oracle и MS SQL Server: имя исходной системы у входных таблиц (по умолчанию ORACLE или имя базы).")
@@ -408,6 +411,96 @@ def reconcile_cmd(
         typer.echo(f"Нижний слой {lower.object_name}: " + ("совпал" if lower.ok else "тоже не совпал"))
     typer.echo(f"Протокол: {r.excel}")
     if not r.ok:
+        raise typer.Exit(EXIT_DATA_ERROR)
+
+
+SourceUrlOption = Annotated[str, typer.Option(
+    "--url", help="Источник Greenplum: greenplum://user@host:5432/база, пароль — из DBT_SRC_PASSWORD.")]
+TablesOption = Annotated[str | None, typer.Option(help="Таблицы через запятую (SALES.ORDERS). По умолчанию все.")]
+
+
+def _source_connect(url: str):
+    try:
+        return greenplum.connect(url, os.environ.get("DBT_SRC_PASSWORD"))
+    except ImportFailed as e:
+        raise _fail(str(e), EXIT_ENV_ERROR) from None
+    except Exception as e:  # noqa: BLE001 — ошибки psycopg и сети
+        raise _fail(f"нет подключения к источнику: {str(e).strip()}", EXIT_ENV_ERROR) from None
+
+
+def _names(tables: str | None) -> list[str] | None:
+    return [t.strip() for t in tables.split(",") if t.strip()] if tables else None
+
+
+def _print_checks(checks) -> bool:
+    for c in checks:
+        if c.ok:
+            typer.secho(f"  {c.table}: совпало, строк {c.source_rows}, сумм {len(c.sums)}", fg=typer.colors.GREEN)
+        else:
+            typer.secho(f"  {c.table}: " + "; ".join(c.problems), fg=typer.colors.RED)
+    bad = sum(1 for c in checks if not c.ok)
+    typer.echo(f"Сверка источника с целью: таблиц {len(checks)}, расхождений {bad}")
+    return bad == 0
+
+
+@app.command("export-data")
+def export_data_cmd(
+    url: SourceUrlOption,
+    out: Annotated[Path, typer.Option(help="Папка для CSV (по одному файлу на таблицу).")] = Path("out/data"),
+    tables: TablesOption = None,
+    project: ProjectOption = None,
+) -> None:
+    """Greenplum: выгрузить данные таблиц модели в CSV для dbtransfer load (NULL — \\N)."""
+    proj = _project(project)
+    with _source_connect(url) as src:
+        try:
+            paths = export_data(src, proj.load_model(), out, _names(tables),
+                                progress=lambda t, p: typer.echo(f"  {t.key_name} -> {p}"))
+        except (TransferError, ProjectError) as e:
+            raise _fail(str(e)) from None
+    typer.secho(f"Выгружено таблиц: {len(paths)} в {out}", fg=typer.colors.GREEN)
+
+
+@app.command("transfer")
+def transfer_cmd(
+    url: SourceUrlOption,
+    tables: TablesOption = None,
+    check: Annotated[bool, typer.Option(help="После переноса сверить число строк и суммы.")] = True,
+    project: ProjectOption = None,
+    env_file: EnvOption = Path(".env"),
+) -> None:
+    """Greenplum: перенести данные таблиц в развёрнутую цель и сверить число строк и суммы с источником."""
+    proj = _project(project)
+    with _source_connect(url) as src, _connect(env_file) as conn:
+        model, rules, _ = _model_package(proj, conn)
+        try:
+            transfer_data(src, conn, model, rules, proj.out_dir / "data", _names(tables),
+                          progress=lambda r: typer.echo(f"  {r.object_name}: {r.rows} строк в {r.table}"))
+            checks = compare_tables(src, conn, model, rules, _names(tables)) if check else []
+        except TransferError as e:
+            raise _fail(str(e)) from None
+        except LoadError as e:
+            raise _fail(f"{e}; " + "; ".join(str(x) for x in e.errors[:5])) from None
+    if check and not _print_checks(checks):
+        raise typer.Exit(EXIT_DATA_ERROR)
+
+
+@app.command("compare")
+def compare_cmd(
+    url: SourceUrlOption,
+    tables: TablesOption = None,
+    project: ProjectOption = None,
+    env_file: EnvOption = Path(".env"),
+) -> None:
+    """Greenplum: сверить число строк и суммы числовых колонок источника и цели по каждой таблице."""
+    proj = _project(project)
+    with _source_connect(url) as src, _connect(env_file) as conn:
+        model, rules, _ = _model_package(proj, conn)
+        try:
+            checks = compare_tables(src, conn, model, rules, _names(tables))
+        except TransferError as e:
+            raise _fail(str(e)) from None
+    if not _print_checks(checks):
         raise typer.Exit(EXIT_DATA_ERROR)
 
 

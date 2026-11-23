@@ -51,9 +51,11 @@ def partition_sql(p: Partitioning, schema: str, table: str, columns: list[str], 
                 continue
             bound = ", ".join(part.values)
             lower, upper = ("EXCLUSIVE", "INCLUSIVE") if p.upper_inclusive else ("INCLUSIVE", "EXCLUSIVE")
-            start = f"START ({prev}) {lower} " if prev is not None else ""
-            lines.append(f"    PARTITION {ident(name)} {start}END ({bound}) {upper}")
-            prev = bound
+            begin = part.start or prev
+            start = f"START ({begin}) {lower}" if begin is not None else ""
+            end = f"END ({bound}) {upper}" if bound else ""
+            lines.append(f"    PARTITION {ident(name)} " + " ".join(x for x in (start, end) if x))
+            prev = bound or None
         result.clause = f"PARTITION BY {p.kind} ({key})\n(\n" + ",\n".join(lines) + "\n)"
         return result
 
@@ -68,9 +70,10 @@ def partition_sql(p: Partitioning, schema: str, table: str, columns: list[str], 
         elif p.kind == "LIST":
             bounds = f"FOR VALUES IN ({', '.join(part.values)})"
         else:
-            lower = prev or ", ".join(["MINVALUE"] * width)
-            bounds = f"FOR VALUES FROM ({lower}) TO ({', '.join(part.values)})"
-            prev = ", ".join(part.values)
+            lower = part.start or prev or ", ".join(["MINVALUE"] * width)
+            upper = ", ".join(part.values) or ", ".join(["MAXVALUE"] * width)
+            bounds = f"FOR VALUES FROM ({lower}) TO ({upper})"
+            prev = ", ".join(part.values) or None
         statements.append(f"CREATE TABLE IF NOT EXISTS {child} PARTITION OF {qualified(schema, table)} {bounds};\n")
     if p.kind == "RANGE" and p.upper_inclusive:
         result.warnings.append(f"{schema}.{table}: в PostgreSQL верхняя граница секции не входит в секцию, "

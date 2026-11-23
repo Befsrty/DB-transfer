@@ -26,12 +26,25 @@ from dbtransfer.generator.sql import literal, qualified
 from dbtransfer.generator.tables import Column, TableBuilder, TableDef
 from dbtransfer.generator.types import NUMERIC_TYPES
 from dbtransfer.importers.csv_reader import decode, detect_delimiter
-from dbtransfer.model import Adso, AdsoKind, DataSource, DbTable, FieldDef, InfoObjectKind, Model, ObjectRef, ObjectType
+from dbtransfer.model import (
+    Adso,
+    AdsoKind,
+    DataSource,
+    DbTable,
+    FieldDef,
+    InfoObjectKind,
+    Model,
+    ObjectRef,
+    ObjectType,
+    SourceKind,
+)
 
 MAX_ERRORS = 20
 # Дата и время в CSV-выгрузке реляционной СУБД: 2024-01-31, 2024-01-31 10:15:00.123, 2024-01-31T10:15:00+03:00
 TIMESTAMP_RE = (r"^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?)?"
                 r"( ?([+-][0-9]{2}(:?[0-9]{2})?|Z))?$")
+# NULL в CSV-выгрузке Greenplum (как в COPY по умолчанию): пустая строка остаётся пустой строкой
+NULL_MARKER = "\\N"
 # Статусы журнала загрузок (ТЗ, 4.3.6)
 LOADED, ACTIVATED, FAILED = "loaded", "activated", "failed"
 ROLLED_BACK = "откат загрузки"
@@ -242,6 +255,9 @@ def convert_sql(col: Column, src: str, rules: TypeRules) -> str:
         expr = f"CASE WHEN {t} = '' THEN NULL ELSE decode(regexp_replace({t}, '^0[xX]', ''), 'hex') END"
     elif f.datatype == "NUMC" and key:
         return f"CASE WHEN {t} = '' THEN {rules.initial_value(f)} ELSE {src} END"
+    elif f.datatype == "NATIVE":
+        # Тип как в источнике той же семьи (boolean, uuid, jsonb, interval, массивы): приводит сама база
+        return f"nullif({src}, '')::{col.type}"
     else:
         return src  # CHAR и прочие строки как есть, пустое значение — пустая строка, как в BW
     return f"coalesce({expr}, {rules.initial_value(f)})" if key else expr
@@ -290,9 +306,11 @@ def load_file(conn: psycopg.Connection, model: Model, rules: TypeRules, object_n
             cur.execute(f"DROP TABLE IF EXISTS {raw}")
             raw_cols = [c.sql_name for c in columns]
             cur.execute(f"CREATE TABLE {raw} (dbt_line_no bigint, " + ", ".join(f"{c} text" for c in raw_cols) + ")")
+            # Выгрузка Greenplum (dbtransfer export-data) пишет NULL как \\N, чтобы отличить его от пустой строки
+            null = NULL_MARKER if model.source_kind == SourceKind.GREENPLUM else None
             with cur.copy(f"COPY {raw} (dbt_line_no, {', '.join(raw_cols)}) FROM STDIN") as copy:
                 for line, values in rows:
-                    copy.write_row([line, *values])
+                    copy.write_row([line, *(None if v == null else v for v in values)])
 
             # Шаг 2: проверка значений запросом к сырой таблице
             checks = [(c, cond, problem) for c in columns for cond, problem in check_sql(c, f"r.{c.sql_name}")]

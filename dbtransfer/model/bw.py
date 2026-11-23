@@ -47,6 +47,7 @@ class ObjectType(StrEnum):
     VIEW = "VIEW"
     DB_ROUTINE = "PROC"
     TABLE = "TABL"  # таблица, переносимая 1:1 (DbTable)
+    EXTERNAL_TABLE = "EXTT"  # внешняя таблица Greenplum (gpfdist, PXF, s3): только для отчёта
 
 
 class SourceKind(StrEnum):
@@ -55,9 +56,11 @@ class SourceKind(StrEnum):
     SAP_BW = "sap_bw"
     ORACLE = "oracle"
     MSSQL = "mssql"
+    GREENPLUM = "greenplum"  # Greenplum 6/7, Yandex MPP, Cloudberry, ADB, Greengage: та же семья, что и цель
 
 
-SOURCE_LABELS = {SourceKind.SAP_BW: "BW", SourceKind.ORACLE: "Oracle", SourceKind.MSSQL: "MS SQL"}
+SOURCE_LABELS = {SourceKind.SAP_BW: "BW", SourceKind.ORACLE: "Oracle", SourceKind.MSSQL: "MS SQL",
+                 SourceKind.GREENPLUM: "Greenplum"}
 
 
 class RuleKind(StrEnum):
@@ -124,6 +127,9 @@ class FieldDef(BaseModel):
     is_key: bool = False
     nullable: bool = True
     comment: str = ""
+    # Точный тип целевой базы, если источник той же семьи (Greenplum): varchar(20), numeric(15,2), jsonb.
+    # Задан — правила type_rules.yaml для колонки не применяются, тип переносится как есть
+    target_type: str = ""
 
 
 class InfoObject(BaseModel):
@@ -194,10 +200,14 @@ class Partition(BaseModel):
 
     name: str
     values: list[str] = Field(default_factory=list)
+    # RANGE: нижняя граница, если секции идут с разрывами (Greenplum START … END …); пусто — конец предыдущей
+    start: str = ""
 
     @property
     def is_default(self) -> bool:
-        return not self.values or self.values[0] in ("MAXVALUE", "DEFAULT")
+        if not self.values:
+            return not self.start  # START без END — открытая сверху секция, а не секция по умолчанию
+        return self.values[0] in ("MAXVALUE", "DEFAULT")
 
 
 class Partitioning(BaseModel):
@@ -223,6 +233,12 @@ class DbTable(BaseModel):
     partitioning: Partitioning | None = None
     # Колонки ключа с регистронезависимой сортировкой в источнике (MS SQL *_CI_*): сравниваются через lower()
     ci_columns: list[str] = Field(default_factory=list)
+    # Распределение и хранение как в источнике (Greenplum); пусто — по type_rules.yaml.
+    # distribution: HASH (колонки в distributed_by), RANDOM или REPLICATED
+    distribution: str = ""
+    distributed_by: list[str] = Field(default_factory=list)
+    storage: str = ""  # heap, ao_row или ao_column
+    storage_options: str = ""  # параметры WITH в форме Greenplum 6: compresstype=zstd, compresslevel=1
 
     @property
     def key_name(self) -> str:

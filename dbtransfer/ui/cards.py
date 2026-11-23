@@ -64,7 +64,7 @@ def object_tables(model: Model, rules: TypeRules, obj: Adso | DataSource | DbTab
             "Таблица BW": bw or "",
             "Таблица ADB": t.qname,
             "Хранение": STORAGE_TEXT.get(t.storage, t.storage),
-            "Распределение": ", ".join(t.distributed_by) or "случайное",
+            "Распределение": "реплицированное" if t.replicated else (", ".join(t.distributed_by) or "случайное"),
             "Первичный ключ": ", ".join(t.primary_key),
         })
     return pd.DataFrame(rows)

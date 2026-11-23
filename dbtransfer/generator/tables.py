@@ -48,6 +48,7 @@ class TableDef:
     storage_options: str = ""
     primary_key: list[str] = field(default_factory=list)
     distributed_by: list[str] = field(default_factory=list)  # пусто — DISTRIBUTED RANDOMLY
+    replicated: bool = False  # DISTRIBUTED REPLICATED: полная копия на каждом сегменте (Greenplum 6+)
     bw_object: str = ""
     role: str = ""
     partition_sql: str = ""  # PARTITION BY ... после DISTRIBUTED BY (Greenplum) или после колонок (PostgreSQL)
@@ -239,11 +240,14 @@ class TableBuilder:
         comment = f"{self.model.source_label}: таблица {obj}" + (f". {t.description}" if t.description else "")
         table = TableDef(naming.db_table_schema(self.model, t), naming.db_table_name(t), columns, comment,
                          primary_key=key_cols_pk, bw_object=f"Таблица {obj}", role=role)
-        table.storage = self.rules.storage_for(role, obj)
-        if table.storage != "heap" and table.primary_key:
-            table.storage = "heap"
-        table.storage_options = self.rules.storage_options.get(table.storage, "")
-        self._apply_distribution(table, obj, key_cols[:1])
+        if t.storage and not self.rules.overrides.get(obj, {}).get("storage"):
+            self._source_storage(table, t)
+        else:
+            table.storage = self.rules.storage_for(role, obj)
+            if table.storage != "heap" and table.primary_key:
+                table.storage = "heap"
+            table.storage_options = self.rules.storage_options.get(table.storage, "")
+        self._source_distribution(table, t, obj, key_cols[:1])
         if t.partitioning is not None and part_cols:
             ps = partition_sql(t.partitioning, table.schema, table.name, part_cols, self.dialect.mpp)
             table.partition_sql, table.after_sql = ps.clause, ps.after
@@ -251,3 +255,43 @@ class TableBuilder:
             if t.partitioning.note:
                 self.warnings.append(f"{obj}: {t.partitioning.note}")
         return table
+
+    # --- хранение и распределение как в источнике той же семьи (Greenplum) ---
+    def _source_storage(self, table: TableDef, t: DbTable) -> None:
+        obj = t.key_name
+        options = [o.strip() for o in t.storage_options.split(",") if o.strip()]
+        if t.storage == "heap":
+            table.storage, table.storage_options = "heap", ", ".join(options)
+            return
+        if table.primary_key and self.dialect.mpp and not self.dialect.ao_primary_key:
+            self.warnings.append(f"{obj}: в источнике таблица {t.storage} с первичным ключом, а в Greenplum 6 "
+                                 "у append-optimized таблиц PRIMARY KEY не бывает. Таблица создана heap; "
+                                 "для хранения как в источнике генерируйте для greenplum7")
+            table.storage, table.storage_options = "heap", ""
+            return
+        if self.dialect.access_method_syntax and any(o.lower().replace(" ", "") == "compresstype=quicklz"
+                                                     for o in options):
+            # quicklz есть только в Greenplum 6: в 7 его убрали, ближайшая замена по скорости — zstd уровня 1
+            options = [o for o in options if not o.lower().replace(" ", "").startswith(("compresstype=",
+                                                                                        "compresslevel="))]
+            options += ["compresstype=zstd", "compresslevel=1"]
+            self.warnings.append(f"{obj}: сжатие quicklz в Greengage 7 / ADB 7 не поддерживается, "
+                                 "заменено на zstd уровня 1")
+        orientation = "column" if t.storage == "ao_column" else "row"
+        table.storage = t.storage
+        table.storage_options = ", ".join([f"appendonly=true, orientation={orientation}", *options])
+
+    def _source_distribution(self, table: TableDef, t: DbTable, obj: str, default: list[str]) -> None:
+        if not t.distribution or self.rules.distributed_by(obj) is not None:
+            self._apply_distribution(table, obj, default)
+            return
+        if t.distribution == "REPLICATED":
+            table.replicated, table.distributed_by = True, []
+            return
+        columns = [ident(naming.db_name(c)) for c in t.distributed_by] if t.distribution == "HASH" else []
+        if table.primary_key and columns and not set(columns) <= set(table.primary_key):
+            # Источник этого не допускает; бывает, если ключ взят из уникального ограничения, а не первичного
+            self.warnings.append(f"{obj}: ключ распределения источника ({', '.join(columns)}) не входит в "
+                                 f"PRIMARY KEY ({', '.join(table.primary_key)}): взято первое поле ключа")
+            columns = table.primary_key[:1]
+        table.distributed_by = columns

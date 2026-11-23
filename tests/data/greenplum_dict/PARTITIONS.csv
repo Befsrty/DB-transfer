@@ -1,0 +1,6 @@
+TABLE_SCHEMA,TABLE_NAME,PARTITION_NAME,PARTITION_TABLE,LEVEL,POSITION,KIND,KEY_COLUMNS,IS_DEFAULT,LIST_VALUES,RANGE_START,START_INCLUSIVE,RANGE_END,END_INCLUSIVE,BOUND,SUBPARTITIONED
+sales,fact_sales,,fact_sales_1_prt_2,0,1,range,sale_date,N,,'2024-01-01'::date,Y,'2024-07-01'::date,N,,N
+sales,fact_sales,,fact_sales_1_prt_3,0,2,range,sale_date,N,,'2024-07-01'::date,Y,'2025-01-01'::date,N,,N
+sales,fact_sales,h2025,fact_sales_1_prt_h2025,0,3,range,sale_date,N,,'2025-07-01'::date,Y,'2026-01-01'::date,N,,N
+sales,fact_sales,other,fact_sales_1_prt_other,0,4,range,sale_date,Y,,,N,,N,,N
+sales,fact_sales,ru,fact_sales_1_prt_2_2_prt_ru,1,1,list,region,N,'RU'::bpchar,,N,,N,,N

@@ -1,0 +1,136 @@
+# Каталог Greenplum, из которого строится модель (dbtransfer/importers/greenplum.py).
+#
+# Подходит для Greenplum 6 и 7, Yandex MPP Analytics for PostgreSQL (Greenplum 6 и Cloudberry 2),
+# Cloudberry, Greengage и Arenadata DB: запросы к pg_catalog и gp_distribution_policy в двух вариантах —
+# для ядра PostgreSQL 9.4 (Greenplum 6) и 12+ (Greenplum 7, Cloudberry), колонки результата одинаковые.
+# Каждый запрос выгружается в CSV под своим именем (TABLES.csv и т. д.) либо выполняется при подключении.
+# Поля описания — как в bw_tables.yaml. version_column у каталога нет: берутся все строки.
+
+tables:
+  VERSION:
+    group: Сервер
+    purpose: Версия сервера (Greenplum 6 или 7, Cloudberry) и имя базы
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      VERSION: {required: true}
+      VERSION_NUM: {}
+      DATABASE: {}
+
+  TABLES:
+    group: Таблицы
+    purpose: Таблицы, хранение (heap, AO строчное и колоночное, внешние) и параметры WITH
+    level: "1"
+    required: true
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      STORAGE: {required: true}
+      RELOPTIONS: {}
+      HAS_OIDS: {}
+      COMMENT: {}
+      ROW_ESTIMATE: {}
+
+  COLUMNS:
+    group: Таблицы
+    purpose: Колонки, типы (format_type), NOT NULL, значения по умолчанию
+    level: "1"
+    required: true
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      COLUMN_NAME: {required: true}
+      POSITION: {required: true}
+      DATA_TYPE: {required: true}
+      NOT_NULL: {required: true}
+      COLUMN_DEFAULT: {}
+      TYPE_SCHEMA: {}
+      COMMENT: {}
+
+  CONSTRAINTS:
+    group: Ключи
+    purpose: Первичные, уникальные, внешние ключи и CHECK
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      CONSTRAINT_NAME: {required: true}
+      CONSTRAINT_TYPE: {required: true}
+      COLUMNS: {required: true}
+      REF_TABLE: {}
+      DEFINITION: {}
+
+  DISTRIBUTION:
+    group: Распределение
+    purpose: Ключ распределения по сегментам (gp_distribution_policy)
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      DISTRIBUTED_BY: {required: true}
+
+  PARTITIONS:
+    group: Секционирование
+    purpose: Секции верхнего уровня, их границы и ключ секционирования
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      PARTITION_NAME: {}
+      PARTITION_TABLE: {}
+      LEVEL: {}
+      POSITION: {required: true}
+      KIND: {required: true}
+      KEY_COLUMNS: {required: true}
+      IS_DEFAULT: {}
+      LIST_VALUES: {}
+      RANGE_START: {}
+      START_INCLUSIVE: {}
+      RANGE_END: {}
+      END_INCLUSIVE: {}
+      BOUND: {}
+      SUBPARTITIONED: {}
+
+  VIEWS:
+    group: Код
+    purpose: Представления и материализованные представления (текст pg_get_viewdef)
+    level: "2"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      KIND: {}
+      VIEW_DEFINITION: {}
+
+  ROUTINES:
+    group: Код
+    purpose: Функции и процедуры (PL/pgSQL, SQL, PL/Python), текст для отчёта о сложности
+    level: "2"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      ROUTINE_SCHEMA: {required: true}
+      ROUTINE_NAME: {required: true}
+      ARGUMENTS: {}
+      LANGUAGE: {}
+      KIND: {}
+      IS_TRIGGER: {}
+      SOURCE: {}

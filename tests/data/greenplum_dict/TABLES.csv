@@ -1,0 +1,7 @@
+TABLE_SCHEMA,TABLE_NAME,STORAGE,RELOPTIONS,HAS_OIDS,COMMENT,ROW_ESTIMATE
+sales,orders,heap,,N,Заказы,150000
+sales,order_lines,ao_column,"appendonly=true, orientation=column, compresstype=quicklz, compresslevel=1",N,,4800000
+sales,fact_sales,ao_row,"appendonly=true, compresstype=zstd, compresslevel=5",N,Продажи по дням,9000000
+sales,regions,heap,fillfactor=90,Y,Справочник регионов,80
+sales,ext_orders,external,,N,,0
+pg_catalog,pg_class,heap,,N,,0
