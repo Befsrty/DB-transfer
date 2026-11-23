@@ -66,7 +66,10 @@ def type_text(f: FieldDef) -> str:
     return f"{f.datatype} {size}" if f.length else f.datatype
 
 
-def field_comment(obj: str, f: FieldDef, iobj: InfoObject | None) -> str:
+def field_comment(obj: str, f: FieldDef, iobj: InfoObject | None, model: Model | None = None) -> str:
+    if model is not None and not model.is_bw:
+        # Реляционный источник: в комментарии поля уже тип источника и описание колонки
+        return f"{model.source_label}: {obj}.{f.name}" + (f" {f.comment}" if f.comment else "")
     text = f.comment or (iobj.description or iobj.short_text if iobj else "")
     return f"BW: {obj}.{f.name} ({type_text(f)})" + (f". {text}" if text else "")
 
@@ -111,7 +114,7 @@ class TableBuilder:
             iobj = self.model.info_objects.get(f.info_object or f.name)
             name = naming.column(f.name, f.info_object if adso else None)
             result.append(Column(name=name, type=self.rules.column_type(f, obj), not_null=f.name in keys,
-                                 comment=field_comment(obj, f, iobj), field=f))
+                                 comment=field_comment(obj, f, iobj, self.model), field=f))
         return result
 
     # --- справочники ---
@@ -154,9 +157,13 @@ class TableBuilder:
         columns = [Column(n, tp, True, c) for n, tp, c in (LOAD_ID, RECORD_NO)]
         columns += self.field_columns(ds.name, ds.fields, adso=False, keys=set())
         kind = "плоский файл" if ds.is_flat_file else (ds.source_type or "источник")
+        comment = (f"BW: DataSource {ds.name} ({kind}, система {ds.source_system}), входная таблица. "
+                   f"{ds.description}".strip())
+        if not self.model.is_bw:
+            comment = f"{self.model.source_label}: {ds.description}, входная таблица для CSV с данными (система " \
+                      f"{ds.source_system})"
         t = TableDef(naming.schema("stg", self.model.schema_prefix), naming.table("datasource", ds.name), columns,
-                     f"BW: DataSource {ds.name} ({kind}, система {ds.source_system}), входная таблица. "
-                     f"{ds.description}".strip(),
+                     comment,
                      bw_object=f"DataSource {ds.ref.key}", role="datasource")
         self._apply_storage(t, "datasource", ds.name)
         self._apply_distribution(t, ds.name, [])
@@ -188,6 +195,10 @@ class TableBuilder:
         comment = (f"BW: ADSO {adso.name} ({KIND_TEXT[adso.kind]}), {ROLE_TEXT[role]}"
                    + (f", таблица BW {bw_table}" if bw_table else "") + "." + (f" {adso.description}"
                                                                               if adso.description else ""))
+        if not self.model.is_bw:
+            source_table = f"{adso.info_area}.{adso.name.removeprefix(adso.info_area + '_')}"
+            comment = f"{self.model.source_label}: таблица {source_table}, {ROLE_TEXT[role]}." + (
+                f" {adso.description}" if adso.description and adso.description != source_table else "")
         t = TableDef(naming.table_schema(self.model, adso, role), naming.table(role, adso.name), columns, comment,
                      primary_key=key_cols if role == "active" else [], bw_object=f"ADSO {adso.name}", role=role)
         self._apply_storage(t, role, adso.name)

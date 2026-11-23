@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,11 +15,12 @@ from dbtransfer.analysis.assessment import assess
 from dbtransfer.analysis.excel import write_complexity, write_import_check
 from dbtransfer.analysis.graph import ScopeError, scope_from
 from dbtransfer.analysis.lineage import DOWN, UP, LineageError, lineage, render
-from dbtransfer.config import load_bw_tables, load_db_settings
+from dbtransfer.config import load_db_settings, source_tables
 from dbtransfer.db import DbError, check_connection, connect, server_dialect
 from dbtransfer.deploy import ACTION_TEXT, DeployError, deploy
 from dbtransfer.generator import DIALECTS, Package, RulesError, TypeRules, generate
-from dbtransfer.importers.bw_csv import SE16_HELP, ImportFailed, import_bw_export
+from dbtransfer.importers.bw_csv import ImportFailed
+from dbtransfer.importers.sources import SOURCES, export_help, import_model, source_kind
 from dbtransfer.model import Model, Severity
 from dbtransfer.project import Project, ProjectError, find_project, init_project
 from dbtransfer.reconcile import STATUSES, ReconcileError, reconcile
@@ -86,10 +88,18 @@ def init_cmd(
                f"и выполните: dbtransfer import -p {folder}")
 
 
+SourceOption = Annotated[
+    str, typer.Option("--source", "-s", help=f"Источник: {', '.join(f'{k} — {v[1]}' for k, v in SOURCES.items())}.")
+]
+
+
 @app.command("tables")
-def tables_cmd() -> None:
-    """Список таблиц BW для выгрузки и обязательные поля."""
-    specs = load_bw_tables()
+def tables_cmd(source: SourceOption = "bw") -> None:
+    """Список таблиц для выгрузки (BW через SE16, словарь Oracle или MS SQL Server) и обязательные поля."""
+    try:
+        specs = source_tables(source_kind(source))
+    except ImportFailed as e:
+        raise _fail(str(e)) from None
     group = None
     for spec in specs.values():
         if spec.group != group:
@@ -99,7 +109,7 @@ def tables_cmd() -> None:
         hyp = ", состав полей — гипотеза" if spec.hypothesis else ""
         typer.echo(f"  {spec.name:<12} {mark}{hyp}. {spec.purpose}")
         typer.echo(f"  {'':<12} поля: {', '.join(spec.required_columns)}")
-    typer.echo("\n" + SE16_HELP)
+    typer.echo("\n" + export_help(source))
 
 
 @app.command("import")
@@ -109,22 +119,37 @@ def import_cmd(
     encoding: Annotated[str | None, typer.Option(help="Кодировка вручную, например cp1251 или utf-8.")] = None,
     delimiter: Annotated[str | None, typer.Option(help="Разделитель вручную: ';', ',' или 'tab'.")] = None,
     language: Annotated[str, typer.Option(help="Язык текстов SAP: R русский, E английский.")] = "R",
+    source: SourceOption = "bw",
+    url: Annotated[str | None, typer.Option(
+        help="Oracle и MS SQL Server: подключение вместо папки, oracle://user@host:1521/service или "
+             "mssql://user@host:1433/база. Пароль — из переменной DBT_SRC_PASSWORD.")] = None,
+    schemas: Annotated[str | None, typer.Option(
+        help="Oracle и MS SQL Server: схемы через запятую. По умолчанию все, кроме служебных.")] = None,
+    system: Annotated[str | None, typer.Option(
+        help="Oracle и MS SQL Server: имя исходной системы у входных таблиц (по умолчанию ORACLE или имя базы).")
+    ] = None,
 ) -> None:
     """Импорт и проверка выгрузок: модель в model.json, проверка файлов в out/import_check.xlsx."""
     proj = _project(project)
-    source = folder or proj.bw_export_dir
+    where = url or folder or proj.bw_export_dir
     try:
-        model = import_bw_export(source, language=language, encoding=encoding,
-                                 delimiter="\t" if delimiter == "tab" else delimiter)
+        model = import_model(source, None if url else where, url=url, password=os.environ.get("DBT_SRC_PASSWORD"),
+                             schemas=schemas.split(",") if schemas else None, system=system, language=language,
+                             encoding=encoding, delimiter="\t" if delimiter == "tab" else delimiter)
     except ImportFailed as e:
         raise _fail(str(e)) from None
     proj.save_model(model)
     check = write_import_check(model, proj.out_dir / "import_check.xlsx")
 
-    typer.echo(f"Импорт из {source}")
-    typer.echo(f"  InfoObject: {len(model.info_objects)}, ADSO: {len(model.adsos)}, "
-               f"DataSource: {len(model.datasources)}, трансформации: {len(model.transformations)}, "
-               f"DTP: {len(model.dtps)}, прочие объекты: {len(model.others)}")
+    typer.echo(f"Импорт из {where}")
+    if model.is_bw:
+        typer.echo(f"  InfoObject: {len(model.info_objects)}, ADSO: {len(model.adsos)}, "
+                   f"DataSource: {len(model.datasources)}, трансформации: {len(model.transformations)}, "
+                   f"DTP: {len(model.dtps)}, прочие объекты: {len(model.others)}")
+    else:
+        keyless = sum(1 for a in model.adsos.values() if not a.key)
+        typer.echo(f"  {model.source_label}: таблиц {len(model.adsos)} (без ключа {keyless}), "
+                   f"прочих объектов (представления, код) {len(model.others)}")
     if model.inactive:
         typer.echo(f"  Пропущены неактивные: {', '.join(o.name for o in model.inactive)}")
     errors = [i for i in model.issues if i.severity == Severity.ERROR]

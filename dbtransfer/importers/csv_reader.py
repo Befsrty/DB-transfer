@@ -74,12 +74,18 @@ def detect_delimiter(header: str) -> str:
     return best if counts[best] else ";"
 
 
-def read_table(folder: Path, spec: BwTable, encoding: str | None = None, delimiter: str | None = None) -> TableFile:
+# Как получить выгрузку и где поправить состав колонок: для сообщений об отсутствующих файлах и колонках
+SE16_HOW = ("через SE16", "Добавьте колонки в выгрузку SE16 (выбор полей, технические имена) "
+                          "или поправьте dbtransfer/rules/bw_tables.yaml")
+
+
+def read_table(folder: Path, spec: BwTable, encoding: str | None = None, delimiter: str | None = None,
+               how: tuple[str, str] = SE16_HOW) -> TableFile:
     result = TableFile(table=spec.name, path=find_file(folder, spec.name))
     if result.path is None:
         severity = Severity.ERROR if spec.required else Severity.WARNING
         tail = "" if spec.required else "; без неё часть сведений будет пропущена"
-        result.issue(severity, f"Нет файла {spec.name}.csv. Выгрузите таблицу {spec.name} через SE16 "
+        result.issue(severity, f"Нет файла {spec.name}.csv. Выгрузите таблицу {spec.name} {how[0]} "
                                f"({spec.purpose.lower()}){tail}")
         return result
 
@@ -100,9 +106,8 @@ def read_table(folder: Path, spec: BwTable, encoding: str | None = None, delimit
     missing = [c for c in spec.required_columns if c not in header]
     if missing:
         result.issue(Severity.ERROR,
-                     f"Нет обязательных колонок: {', '.join(missing)}. Таблица не использована. "
-                     "Добавьте колонки в выгрузку SE16 (выбор полей, технические имена) "
-                     "или поправьте dbtransfer/rules/bw_tables.yaml", line=1)
+                     f"Нет обязательных колонок: {', '.join(missing)}. Таблица не использована. {how[1]}",
+                     line=1)
         return result
     extra = [c for c in header if c not in spec.columns]
     if extra:

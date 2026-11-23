@@ -136,3 +136,16 @@ def test_app_without_model_asks_for_import(project_dir):
     at = AppTest.from_file(str(APP), default_timeout=60).run()
     assert not at.exception
     assert any("Импортируйте выгрузки" in i.value for i in at.info)
+
+
+def test_app_imports_oracle_dictionary(project_dir):
+    """Вкладка «Импорт»: источник Oracle, папка со словарём — модель строится, остальные вкладки не падают."""
+    folder = Path(__file__).parents[1] / "data" / "oracle_dict"
+    at = AppTest.from_file(str(APP), default_timeout=60).run()
+    at.radio(key="import_source").set_value("oracle").run()
+    assert not at.exception
+    at.text_input(key="import_schemas").set_value("SALES")
+    next(t for t in at.text_input if t.label == "Папка с CSV-выгрузками").set_value(str(folder))
+    next(b for b in at.button if b.label == "Импортировать").click().run()
+    assert not at.exception
+    assert any("Импортировано из Oracle: таблиц 4" in s.value for s in at.success)

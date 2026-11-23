@@ -1,0 +1,119 @@
+# Представления словаря MS SQL Server, из которых строится модель (dbtransfer/importers/mssql_dict.py).
+#
+# Основа — INFORMATION_SCHEMA; тексты представлений, код и комментарии берутся из sys.*
+# Каждый набор выгружается в CSV под своим именем (COLUMNS.csv и т. д.) запросом из MSSQL_QUERIES
+# в mssql_dict.py, либо читается напрямую при подключении к базе.
+# Поля описания — как в bw_tables.yaml. version_column у словаря нет: берутся все строки.
+
+tables:
+  TABLES:
+    group: Таблицы
+    purpose: Таблицы и представления (INFORMATION_SCHEMA.TABLES)
+    level: "1"
+    required: true
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_CATALOG: {}
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      TABLE_TYPE: {required: true}
+
+  COLUMNS:
+    group: Таблицы
+    purpose: Колонки, типы и длины (INFORMATION_SCHEMA.COLUMNS)
+    level: "1"
+    required: true
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      COLUMN_NAME: {required: true}
+      ORDINAL_POSITION: {required: true}
+      IS_NULLABLE: {required: true}
+      DATA_TYPE: {required: true}
+      CHARACTER_MAXIMUM_LENGTH: {required: true}
+      NUMERIC_PRECISION: {required: true}
+      NUMERIC_SCALE: {required: true}
+      DATETIME_PRECISION: {}
+
+  TABLE_CONSTRAINTS:
+    group: Ключи
+    purpose: Первичные, уникальные и внешние ключи (INFORMATION_SCHEMA.TABLE_CONSTRAINTS)
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      CONSTRAINT_SCHEMA: {required: true}
+      CONSTRAINT_NAME: {required: true}
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      CONSTRAINT_TYPE: {required: true}
+
+  KEY_COLUMN_USAGE:
+    group: Ключи
+    purpose: Колонки ключей по порядку (INFORMATION_SCHEMA.KEY_COLUMN_USAGE)
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      CONSTRAINT_SCHEMA: {required: true}
+      CONSTRAINT_NAME: {required: true}
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      COLUMN_NAME: {required: true}
+      ORDINAL_POSITION: {required: true}
+
+  REFERENTIAL_CONSTRAINTS:
+    group: Ключи
+    purpose: На какой ключ ссылается внешний ключ (INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS)
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      CONSTRAINT_SCHEMA: {required: true}
+      CONSTRAINT_NAME: {required: true}
+      UNIQUE_CONSTRAINT_SCHEMA: {required: true}
+      UNIQUE_CONSTRAINT_NAME: {required: true}
+
+  COMMENTS:
+    group: Комментарии
+    purpose: Описания MS_Description таблиц и колонок (sys.extended_properties)
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      COLUMN_NAME: {required: true}
+      COMMENT: {required: true}
+
+  VIEWS:
+    group: Представления
+    purpose: Полный текст представлений (sys.sql_modules), для отчёта о сложности
+    level: "2"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      VIEW_DEFINITION: {}
+
+  ROUTINES:
+    group: Код
+    purpose: Процедуры, функции и триггеры с числом строк кода (sys.objects, sys.sql_modules)
+    level: "3"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      ROUTINE_SCHEMA: {required: true}
+      ROUTINE_NAME: {required: true}
+      ROUTINE_TYPE: {required: true}
+      LINES: {}

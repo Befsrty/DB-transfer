@@ -1,0 +1,4 @@
+CONSTRAINT_SCHEMA,CONSTRAINT_NAME,TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION
+dbo,PK_Customer,dbo,Customer,CustomerId,1
+dbo,PK_Order,dbo,Order,OrderId,1
+dbo,FK_Order_Customer,dbo,Order,CustomerId,1

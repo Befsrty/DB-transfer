@@ -20,6 +20,11 @@ types:
   UNIT: "varchar({length})"
   STRING: "text"
   SSTRING: "text"
+  # Типы реляционных источников (Oracle, MS SQL Server), которых нет в ABAP Dictionary
+  NUMERIC: "numeric"            # NUMBER без точности
+  TIMESTAMP: "timestamp"        # DATE и TIMESTAMP Oracle, datetime и datetime2 MS SQL
+  TIMESTAMPTZ: "timestamptz"    # TIMESTAMP WITH TIME ZONE, datetimeoffset
+  BINARY: "bytea"               # RAW, BLOB, varbinary; в CSV — шестнадцатеричная строка
 # Для прочих типов (RAW, ACCP и т. п.)
 default_type: "text"
 

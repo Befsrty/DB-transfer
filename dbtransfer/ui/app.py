@@ -21,11 +21,12 @@ from dbtransfer.analysis.assessment import TYPE_ORDER, Report, assess
 from dbtransfer.analysis.excel import write_complexity, write_import_check
 from dbtransfer.analysis.graph import ScopeError
 from dbtransfer.analysis.lineage import DOWN, UP, LineageError, lineage, render
-from dbtransfer.config import load_bw_tables, load_db_settings
+from dbtransfer.config import load_db_settings, source_tables
 from dbtransfer.db import DbError, check_connection, connect, server_dialect
 from dbtransfer.deploy import ACTION_TEXT, DeployError, deploy, make_plan
 from dbtransfer.generator import DIALECTS, GROUPS, RulesError, TypeRules, generate
-from dbtransfer.importers.bw_csv import SE16_HELP, ImportFailed, import_bw_export
+from dbtransfer.importers.bw_csv import ImportFailed
+from dbtransfer.importers.sources import SOURCES, export_help, import_model, source_kind
 from dbtransfer.model import Adso, DataSource, Model, Severity
 from dbtransfer.project import Project, ProjectError, find_project, open_project
 from dbtransfer.reconcile import MATCH, STATUSES, ReconcileError, reconcile
@@ -141,26 +142,35 @@ def sidebar() -> Project | None:
 # --- вкладки ---
 
 def tab_import(project: Project) -> None:
-    st.subheader("Импорт выгрузок BW")
-    with st.expander("Какие таблицы BW выгрузить и как (SE16)"):
-        specs = load_bw_tables()
+    st.subheader("Импорт метаданных")
+    source = st.radio("Источник", list(SOURCES), horizontal=True, format_func=lambda k: SOURCES[k][1],
+                      key="import_source")
+    with st.expander("Что выгрузить и как" if source != "bw" else "Какие таблицы BW выгрузить и как (SE16)"):
+        specs = source_tables(source_kind(source))
         st.dataframe(pd.DataFrame([{
             "Таблица": s.name, "Группа": s.group, "Нужна": "обязательно" if s.required else "желательно",
             "Зачем": s.purpose, "Поля": ", ".join(s.required_columns),
         } for s in specs.values()]), hide_index=True, width="stretch")
-        st.code(SE16_HELP, language=None)
+        st.code(export_help(source), language=None if source == "bw" else "sql")
     folder = st.text_input("Папка с CSV-выгрузками", value=str(project.bw_export_dir))
+    schemas = ""
+    if source != "bw":
+        schemas = st.text_input("Схемы через запятую (пусто — все, кроме служебных)", key="import_schemas")
     if st.button("Импортировать", type="primary"):
         try:
-            model = import_bw_export(Path(folder))
+            model = import_model(source, Path(folder), schemas=schemas.split(",") if schemas else None)
         except ImportFailed as e:
             st.error(str(e))
             return
         project.save_model(model)
         write_import_check(model, project.out_dir / "import_check.xlsx")
         st.cache_data.clear()
-        st.success(f"Импортировано: ADSO {len(model.adsos)}, DataSource {len(model.datasources)}, "
-                   f"трансформаций {len(model.transformations)}, InfoObject {len(model.info_objects)}")
+        if model.is_bw:
+            st.success(f"Импортировано: ADSO {len(model.adsos)}, DataSource {len(model.datasources)}, "
+                       f"трансформаций {len(model.transformations)}, InfoObject {len(model.info_objects)}")
+        else:
+            st.success(f"Импортировано из {model.source_label}: таблиц {len(model.adsos)}, "
+                       f"прочих объектов {len(model.others)}")
     model = _model(project)
     if model is None:
         return

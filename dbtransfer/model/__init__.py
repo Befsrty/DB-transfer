@@ -1,5 +1,6 @@
 from dbtransfer.model.bw import (
     SCHEMA_VERSION,
+    SOURCE_LABELS,
     Adso,
     AdsoKind,
     DataSource,
@@ -18,11 +19,13 @@ from dbtransfer.model.bw import (
     Rule,
     RuleKind,
     Severity,
+    SourceKind,
     Transformation,
 )
 
 __all__ = [
     "SCHEMA_VERSION",
+    "SOURCE_LABELS",
     "Adso",
     "AdsoKind",
     "DataSource",
@@ -41,5 +44,6 @@ __all__ = [
     "Rule",
     "RuleKind",
     "Severity",
+    "SourceKind",
     "Transformation",
 ]

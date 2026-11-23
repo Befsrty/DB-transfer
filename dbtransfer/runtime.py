@@ -29,6 +29,9 @@ from dbtransfer.importers.csv_reader import decode, detect_delimiter
 from dbtransfer.model import Adso, AdsoKind, DataSource, FieldDef, InfoObjectKind, Model, ObjectRef, ObjectType
 
 MAX_ERRORS = 20
+# Дата и время в CSV-выгрузке реляционной СУБД: 2024-01-31, 2024-01-31 10:15:00.123, 2024-01-31T10:15:00+03:00
+TIMESTAMP_RE = (r"^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?)?"
+                r"( ?([+-][0-9]{2}(:?[0-9]{2})?|Z))?$")
 # Статусы журнала загрузок (ТЗ, 4.3.6)
 LOADED, ACTIVATED, FAILED = "loaded", "activated", "failed"
 ROLLED_BACK = "откат загрузки"
@@ -109,7 +112,7 @@ def _pseudo_field(col: Column) -> FieldDef:
 def resolve_target(model: Model, rules: TypeRules, name: str, header: list[str]) -> LoadTarget:
     """Куда грузить файл: входная таблица DataSource или атрибуты/тексты признака (по заголовку)."""
     builder = TableBuilder(model, rules)
-    obj = model.find(name)
+    obj = model.find_datasource(name) or model.find(name)
     if isinstance(obj, DataSource):
         return LoadTarget("datasource", obj.name, builder.datasource_table(obj))
     iobj = model.info_objects.get(name)
@@ -165,9 +168,11 @@ def check_sql(col: Column, src: str) -> list[tuple[str, str]]:
     """Условия «значение не приводится к типу» и текст проблемы."""
     f = _f(col)
     t = _trim(src)
-    if f.datatype in ("CURR", "QUAN", "DEC", "FLTP"):
+    if f.datatype in ("CURR", "QUAN", "DEC", "NUMERIC", "FLTP"):
         norm = f"replace(replace({t}, ' ', ''), ',', '.')"
-        checks = [(f"{t} <> '' AND {norm} !~ '^[-+]?[0-9]*[.]?[0-9]+$'", "не число")]
+        number = "^[-+]?[0-9]*[.]?[0-9]+([eE][-+]?[0-9]+)?$" if f.datatype in ("FLTP", "NUMERIC") \
+            else "^[-+]?[0-9]*[.]?[0-9]+$"
+        checks = [(f"{t} <> '' AND {norm} !~ '{number}'", "не число")]
         if f.datatype != "FLTP" and f.length:
             whole = f.length - f.decimals
             checks.append((f"{t} <> '' AND length(ltrim(regexp_replace(split_part({norm}, '.', 1), '[^0-9]', '', "
@@ -180,9 +185,18 @@ def check_sql(col: Column, src: str) -> list[tuple[str, str]]:
                f"AND substr({t}, 7, 2) BETWEEN '01' AND '31')")
         dmy = (f"({t} ~ '^[0-9]{{2}}[.][0-9]{{2}}[.][0-9]{{4}}$' AND substr({t}, 4, 2) BETWEEN '01' AND '12' "
                f"AND substr({t}, 1, 2) BETWEEN '01' AND '31')")
-        return [(f"{t} NOT IN ('', '00000000') AND NOT {ymd} AND NOT {dmy}", "не дата ГГГГММДД или ДД.ММ.ГГГГ")]
+        iso = (f"({t} ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$' AND substr({t}, 6, 2) BETWEEN '01' AND '12' "
+               f"AND substr({t}, 9, 2) BETWEEN '01' AND '31')")
+        return [(f"{t} NOT IN ('', '00000000') AND NOT {ymd} AND NOT {dmy} AND NOT {iso}",
+                 "не дата ГГГГММДД, ДД.ММ.ГГГГ или ГГГГ-ММ-ДД")]
     if f.datatype == "TIMS":
-        return [(f"{t} <> '' AND {t} !~ '^[0-9]{{6}}$'", "не время ЧЧММСС")]
+        return [(f"{t} <> '' AND {t} !~ '^[0-9]{{6}}$' AND {t} !~ '^[0-9]{{2}}:[0-9]{{2}}(:[0-9]{{2}}([.][0-9]+)?)?$'",
+                 "не время ЧЧММСС или ЧЧ:ММ:СС")]
+    if f.datatype in ("TIMESTAMP", "TIMESTAMPTZ"):
+        return [(f"{t} <> '' AND {t} !~ '{TIMESTAMP_RE}'", "не дата и время ГГГГ-ММ-ДД ЧЧ:ММ:СС")]
+    if f.datatype == "BINARY":
+        return [(f"{t} <> '' AND regexp_replace({t}, '^0[xX]', '') !~ '^([0-9a-fA-F]{{2}})*$'",
+                 "не шестнадцатеричная строка")]
     checks = []
     if f.datatype == "NUMC":
         checks.append((f"{t} !~ '^[0-9]*$'", "не только цифры (NUMC)"))
@@ -203,9 +217,15 @@ def convert_sql(col: Column, src: str, rules: TypeRules) -> str:
     elif f.datatype == "DATS":
         empty = rules.initial_value(f) if key else "NULL"
         return (f"CASE WHEN {t} IN ('', '00000000') THEN {empty} "
-                f"WHEN {t} ~ '[.]' THEN to_date({t}, 'DD.MM.YYYY') ELSE to_date({t}, 'YYYYMMDD') END")
+                f"WHEN {t} ~ '[.]' THEN to_date({t}, 'DD.MM.YYYY') WHEN {t} ~ '-' THEN to_date({t}, 'YYYY-MM-DD') "
+                f"ELSE to_date({t}, 'YYYYMMDD') END")
     elif f.datatype == "TIMS":
-        expr = f"CASE WHEN {t} = '' THEN NULL ELSE to_timestamp({t}, 'HH24MISS')::time END"
+        expr = (f"CASE WHEN {t} = '' THEN NULL WHEN {t} ~ ':' THEN {t}::time "
+                f"ELSE to_timestamp({t}, 'HH24MISS')::time END")
+    elif f.datatype in ("TIMESTAMP", "TIMESTAMPTZ"):
+        expr = f"nullif({t}, '')::{col.type}"
+    elif f.datatype == "BINARY":
+        expr = f"CASE WHEN {t} = '' THEN NULL ELSE decode(regexp_replace({t}, '^0[xX]', ''), 'hex') END"
     elif f.datatype == "NUMC" and key:
         return f"CASE WHEN {t} = '' THEN {rules.initial_value(f)} ELSE {src} END"
     else:
@@ -255,8 +275,8 @@ def load_file(conn: psycopg.Connection, model: Model, rules: TypeRules, object_n
             # Шаг 1: сырая таблица, все колонки text, пустое значение остаётся пустой строкой
             cur.execute(f"DROP TABLE IF EXISTS {raw}")
             raw_cols = [c.sql_name for c in columns]
-            cur.execute(f"CREATE TABLE {raw} (line_no bigint, " + ", ".join(f"{c} text" for c in raw_cols) + ")")
-            with cur.copy(f"COPY {raw} (line_no, {', '.join(raw_cols)}) FROM STDIN") as copy:
+            cur.execute(f"CREATE TABLE {raw} (dbt_line_no bigint, " + ", ".join(f"{c} text" for c in raw_cols) + ")")
+            with cur.copy(f"COPY {raw} (dbt_line_no, {', '.join(raw_cols)}) FROM STDIN") as copy:
                 for line, values in rows:
                     copy.write_row([line, *values])
 
@@ -264,7 +284,7 @@ def load_file(conn: psycopg.Connection, model: Model, rules: TypeRules, object_n
             checks = [(c, cond, problem) for c in columns for cond, problem in check_sql(c, f"r.{c.sql_name}")]
             if checks:
                 union = " UNION ALL ".join(
-                    f"SELECT r.line_no, {literal(header[columns.index(c)])} AS field, r.{c.sql_name} AS value, "
+                    f"SELECT r.dbt_line_no, {literal(header[columns.index(c)])} AS field, r.{c.sql_name} AS value, "
                     f"{literal(problem)} AS problem FROM {raw} r WHERE {cond}" for c, cond, problem in checks)
                 total = cur.execute(f"SELECT count(*) FROM ({union}) e").fetchone()[0]
                 if total:
@@ -278,7 +298,7 @@ def load_file(conn: psycopg.Connection, model: Model, rules: TypeRules, object_n
             names = [c.sql_name for c in columns]
             if target.with_load_id:
                 names = ["load_id", "record_no", *names]
-                exprs = [str(load_id), "row_number() OVER (ORDER BY r.line_no)", *exprs]
+                exprs = [str(load_id), "row_number() OVER (ORDER BY r.dbt_line_no)", *exprs]
             else:
                 keys = [c for c in columns if c.not_null]
                 join = " AND ".join(f"t.{c.sql_name} = {convert_sql(c, f'r.{c.sql_name}', rules)}" for c in keys)
@@ -382,7 +402,7 @@ def run_load(conn: psycopg.Connection, model: Model, package: Package, load_id: 
     if earlier is not None:
         raise RunError(f"Сначала прогоните загрузку {earlier} того же объекта {object_name}: "
                        "загрузки активируются строго по возрастанию номера")
-    source = model.find(object_name)
+    source = model.find_datasource(object_name) or model.find(object_name)
     if not isinstance(source, DataSource):
         raise RunError(f"Загрузка {load_id} — это {object_name}, а прогон выполняется для загрузок DataSource")
     steps = flow_steps(model, package, source.ref, scope)
@@ -426,7 +446,7 @@ def rollback_load(conn: psycopg.Connection, model: Model, load_id: int) -> int:
         object_name, status = row
         if status == ACTIVATED:
             raise RunError(f"Загрузка {load_id} уже активирована, её данные разошлись по потоку; откат невозможен")
-        source = model.find(object_name)
+        source = model.find_datasource(object_name) or model.find(object_name)
         if not isinstance(source, DataSource):
             raise RunError(f"Загрузка {load_id} ({object_name}) — справочник, его откат не поддерживается")
         cur.execute(f"DELETE FROM {naming.data_table(model, source)} WHERE load_id = %s", (load_id,))

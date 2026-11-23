@@ -74,7 +74,8 @@ def make_spec(model: Model, object_name: str) -> Spec:
         raise ReconcileError(f"ADSO {object_name} не найден. Сверяются активные данные ADSO, например ZSD_A02")
     builder = TableBuilder(model, TypeRules.load())
     keys = [f.name for f in builder.adso_keys(adso)] or [f.name for f in adso.fields if not is_key_figure(model, f)]
-    measures = [f.name for f in adso.fields if is_key_figure(model, f)]
+    # Числовое поле в ключе (код заказа в таблице Oracle) — часть ключа, а не показатель
+    measures = [f.name for f in adso.fields if is_key_figure(model, f) and f.name not in keys]
     names = {f.name for f in adso.fields}
     units = {}
     for m in measures:

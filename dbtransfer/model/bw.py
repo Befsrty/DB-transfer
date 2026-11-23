@@ -43,6 +43,20 @@ class ObjectType(StrEnum):
     PROCESS_CHAIN = "CHAIN"
     CLASSIC_DSO = "ODSO"
     DTP = "DTPA"
+    # Объекты реляционных источников (Oracle, MS SQL Server): только для отчёта
+    VIEW = "VIEW"
+    DB_ROUTINE = "PROC"
+
+
+class SourceKind(StrEnum):
+    """Из чего построена модель: выгрузки SAP BW или словарь реляционной СУБД."""
+
+    SAP_BW = "sap_bw"
+    ORACLE = "oracle"
+    MSSQL = "mssql"
+
+
+SOURCE_LABELS = {SourceKind.SAP_BW: "BW", SourceKind.ORACLE: "Oracle", SourceKind.MSSQL: "MS SQL"}
 
 
 class RuleKind(StrEnum):
@@ -221,6 +235,7 @@ class OtherObject(BaseModel):
     name: str
     related: list[ObjectRef] = Field(default_factory=list)
     info: str = ""
+    lines: int = 0  # строк кода (представления, процедуры), для трудоёмкости
 
 
 class InactiveObject(BaseModel):
@@ -236,6 +251,7 @@ class Model(BaseModel):
     schema_version: int = SCHEMA_VERSION
     name: str = ""
     bw_version: str = ""
+    source_kind: SourceKind = SourceKind.SAP_BW
     schema_prefix: str = "dbt"
     source: str = ""
     imported_at: datetime | None = None
@@ -274,9 +290,27 @@ class Model(BaseModel):
             return self.info_objects[name]
         return next((o for o in self.others if o.name == name), None)
 
+    @property
+    def is_bw(self) -> bool:
+        return self.source_kind == SourceKind.SAP_BW
+
+    @property
+    def source_label(self) -> str:
+        return SOURCE_LABELS[self.source_kind]
+
+    def find_datasource(self, name: str) -> DataSource | None:
+        """DataSource по ключу ZSALES_FF/FLATFILE или по имени, если оно однозначно. В моделях из словаря
+        Oracle и MS SQL Server входная таблица и ADSO называются одинаково, find вернул бы ADSO."""
+        if name in self.datasources:
+            return self.datasources[name]
+        matches = [ds for ds in self.datasources.values() if ds.name == name]
+        return matches[0] if len(matches) == 1 else None
+
     def content_hash(self) -> str:
-        """Хеш содержимого без времени импорта: одинаковые выгрузки дают одинаковый хеш."""
-        data = self.model_dump_json(exclude={"imported_at", "source", "files"})
+        """Хеш содержимого без времени импорта: одинаковые выгрузки дают одинаковый хеш.
+        Поля, добавленные для реляционных источников, в хеш не входят: хеш моделей BW не меняется."""
+        data = self.model_dump_json(exclude={"imported_at": True, "source": True, "files": True, "source_kind": True,
+                                             "others": {"__all__": {"lines"}}})
         return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
 
     def save(self, path: Path) -> None:

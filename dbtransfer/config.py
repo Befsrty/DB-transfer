@@ -41,6 +41,15 @@ def load_bw_tables(path: Path = RULES_DIR / "bw_tables.yaml") -> dict[str, BwTab
     }
 
 
+# Описание таблиц словаря по виду источника модели (Model.source_kind)
+DICT_TABLE_FILES = {"sap_bw": "bw_tables.yaml", "oracle": "oracle_dict.yaml", "mssql": "mssql_dict.yaml"}
+
+
+def source_tables(kind: str) -> dict[str, BwTable]:
+    """Таблицы, которые выгружаются для источника: SE16 для BW, словарь для Oracle и MS SQL Server."""
+    return load_bw_tables(RULES_DIR / DICT_TABLE_FILES[kind])
+
+
 class DbSettings(BaseModel):
     host: str = "localhost"
     port: int = 15432
