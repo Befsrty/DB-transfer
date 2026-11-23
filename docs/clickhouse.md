@@ -21,7 +21,7 @@ uv run dbtransfer generate --dialect clickhouse -p demo
 
 Шаги активации и трансформаций доступны и в коде: `SqlObject.steps` — список пар (заголовок, SQL без «;»). Будущий прогон для ClickHouse будет выполнять их по очереди с параметром запроса `{p_load_id:Int64}` (так передаются параметры в clickhouse-client — `--param_p_load_id=…`, — в HTTP-интерфейсе и в clickhouse-connect).
 
-Шаблоны лежат в `dbtransfer/generator/templates/clickhouse/`, генератор — `dbtransfer/generator/clickhouse.py`. Функции дат и строк, которые различаются у PostgreSQL и ClickHouse, вынесены в `dbtransfer/generator/dialect.py`; пакет Greengage от этого не изменился (эталон `tests/golden/sql` тот же). Эталон ClickHouse — `tests/golden/clickhouse`.
+Шаблоны лежат в `dbtransfer/generator/templates/clickhouse/`, генератор — `dbtransfer/generator/clickhouse.py`. Функции дат и строк, которые различаются у PostgreSQL и ClickHouse, вынесены в `dbtransfer/generator/sql_functions.py`; пакет Greengage от этого не изменился (эталон `tests/golden/sql` тот же). Эталон ClickHouse — `tests/golden/clickhouse`.
 
 ### Активация standard (перезапись, журнал изменений)
 

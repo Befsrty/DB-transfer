@@ -17,7 +17,7 @@ from dbtransfer.analysis.lineage import DOWN, UP, LineageError, lineage, render
 from dbtransfer.config import load_bw_tables, load_db_settings
 from dbtransfer.db import DbError, check_connection, connect, server_dialect
 from dbtransfer.deploy import ACTION_TEXT, DeployError, deploy
-from dbtransfer.generator import DIALECTS, Package, RulesError, TypeRules, generate
+from dbtransfer.generator import DEFAULT_DIALECT, DIALECTS, Package, RulesError, TypeRules, generate
 from dbtransfer.importers.bw_csv import SE16_HELP, ImportFailed, import_bw_export
 from dbtransfer.model import Model, Severity
 from dbtransfer.project import Project, ProjectError, find_project, init_project
@@ -214,7 +214,9 @@ def lineage_cmd(
 @app.command("generate")
 def generate_cmd(
     project: ProjectOption = None,
-    dialect: Annotated[str, typer.Option(help=f"Диалект SQL: {', '.join(DIALECTS)}.")] = "greenplum",
+    dialect: Annotated[str, typer.Option(help=f"Диалект SQL: {', '.join(DIALECTS)}. greenplum7 — ADB 7.5 / "
+                                           "Greengage 7, greenplum — ADB 6.x / Greengage 6 / Yandex MPP.")
+    ] = DEFAULT_DIALECT,
     scope: Annotated[bool, typer.Option("--scope", help="Только состав переноса из project.yaml.")] = False,
 ) -> None:
     """Сгенерировать пакет SQL в out/sql/: DDL, функции активации и трансформаций."""

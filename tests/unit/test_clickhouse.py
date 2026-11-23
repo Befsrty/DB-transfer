@@ -13,7 +13,7 @@ from test_formula_sql import resolve
 
 from dbtransfer.generator import RulesError, TypeRules, generate
 from dbtransfer.generator.clickhouse import ClickHouseTypes
-from dbtransfer.generator.dialect import ClickHouseSql, ch_literal
+from dbtransfer.generator.sql_functions import ClickHouseSql, ch_literal
 from dbtransfer.generator.formula_sql import translate
 from dbtransfer.importers.bw_csv import import_bw_export
 from dbtransfer.project import open_project

@@ -10,7 +10,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from dbtransfer.generator.dialect import POSTGRES, SqlDialect
+from dbtransfer.generator.sql_functions import POSTGRES, SqlDialect
 from dbtransfer.generator.types import NUMERIC_TYPES
 from dbtransfer.model import FieldDef
 
