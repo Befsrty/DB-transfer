@@ -46,7 +46,7 @@ uv run dbtransfer generate --dialect clickhouse -p demo
 
 ## Допущения первой версии
 
-Их нужно проверить на настоящем кластере Yandex Cloud. В этой версии SQL на сервере ClickHouse не выполнялся: проверены только генерация и юнит-тесты.
+Пакет проверяется в CI на ClickHouse 24.8 и 25.8 (один контейнер `clickhouse/clickhouse-server`, тест `tests/integration/test_clickhouse_sql.py`, запуск `uv run pytest -m clickhouse`): DDL, повторное развёртывание, пример приложения Д по шагам, заготовка и полная загрузка со справочником. На кластере Yandex Cloud пакет ещё не проверялся.
 
 1. **Версия ClickHouse 23.8 или новее.** Нужны lightweight `DELETE` (без экспериментальных настроек — с 23.3), `Date32`, оконные функции и `throwIf` с текстом. Шаг `DELETE … WHERE (ключ) IN (SELECT …)` должен дождаться завершения, иначе следующий `INSERT` увидит старые строки; в 24.4 и новее за это отвечает настройка `lightweight_deletes_sync` (по умолчанию ждёт).
 2. **Один хост или один шард без репликации.** Движки — `MergeTree` и `ReplacingMergeTree`. Для кластера из нескольких хостов в Yandex Cloud в `type_rules.yaml` (секция `clickhouse.engines`) нужно указать `ReplicatedMergeTree` и добавить `ON CLUSTER` к DDL; для шардов — ещё таблицы `Distributed`. Это не генерируется.
@@ -64,5 +64,5 @@ uv run dbtransfer generate --dialect clickhouse -p demo
 
 1. Подключение к ClickHouse (clickhouse-connect, порт 8443 с TLS в Yandex Cloud) в `db.py` и параметры в `.env`.
 2. Развёртывание DDL с журналом `deploy_log`, загрузка CSV и прогон шагов из `SqlObject.steps` в `runtime.py`, сверка с эталоном.
-3. Интеграционный тест в CI с контейнером `clickhouse/clickhouse-server` и, затем, проверка на кластере Yandex Cloud.
+3. Проверка на кластере Yandex Cloud.
 4. Генерация для кластера: `ON CLUSTER`, Replicated-движки, таблицы `Distributed`.
