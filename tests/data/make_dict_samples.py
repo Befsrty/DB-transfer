@@ -98,6 +98,28 @@ def oracle() -> None:
         ["SALES", "PKG_LOAD", "PACKAGE BODY", 180],
         ["SALES", "P_RECALC", "PROCEDURE", 35],
     ])
+    write(d, "ALL_PART_TABLES", ["OWNER", "TABLE_NAME", "PARTITIONING_TYPE", "SUBPARTITIONING_TYPE", "INTERVAL"], [
+        ["SALES", "ORDERS", "RANGE", "NONE", "NUMTOYMINTERVAL(1,'MONTH')"],
+        ["SALES", "CUSTOMERS", "LIST", "NONE", ""],
+        ["SALES", "LOG_EVENTS", "HASH", "NONE", ""],
+    ])
+    write(d, "ALL_PART_KEY_COLUMNS", ["OWNER", "NAME", "OBJECT_TYPE", "COLUMN_NAME", "COLUMN_POSITION"], [
+        ["SALES", "ORDERS", "TABLE", "ORDER_DATE", 1],
+        ["SALES", "CUSTOMERS", "TABLE", "REGION", 1],
+        ["SALES", "LOG_EVENTS", "TABLE", "EVENT_TS", 1],
+        ["SALES", "PK_ORDERS", "INDEX", "ORDER_ID", 1],
+    ])
+    write(d, "ALL_TAB_PARTITIONS", ["TABLE_OWNER", "TABLE_NAME", "PARTITION_NAME", "PARTITION_POSITION",
+                                    "HIGH_VALUE"], [
+        ["SALES", "ORDERS", "P_2025", 1,
+         "TO_DATE(' 2026-01-01 00:00:00', 'SYYYY-MM-DD HH24:MI:SS', 'NLS_CALENDAR=GREGORIAN')"],
+        ["SALES", "ORDERS", "P_2026", 2,
+         "TO_DATE(' 2027-01-01 00:00:00', 'SYYYY-MM-DD HH24:MI:SS', 'NLS_CALENDAR=GREGORIAN')"],
+        ["SALES", "ORDERS", "P_MAX", 3, "MAXVALUE"],
+        ["SALES", "CUSTOMERS", "P_CENTER", 1, "'C', 'M'"],
+        ["SALES", "CUSTOMERS", "P_OTHER", 2, "DEFAULT"],
+        ["SALES", "LOG_EVENTS", "SYS_P1", 1, ""],
+    ])
     data = HERE / "oracle_data"
     write(data, "SALES_ORDERS", ["ORDER_ID", "CUSTOMER_ID", "ORDER_DATE", "AMOUNT", "STATUS", "NOTE", "TOTAL_WEIGHT"], [
         [1, 10, "2026-01-15 10:30:00", "1500,50", "NEW", "первый", "12.5"],
@@ -124,38 +146,56 @@ def mssql() -> None:
         ["Shop", "dbo", "Order", "BASE TABLE"],
         ["Shop", "dbo", "AuditLog", "BASE TABLE"],
         ["Shop", "dbo", "vOrderTotals", "VIEW"],
+        ["Shop", "dbo", "Country", "BASE TABLE"],
+        ["Shop", "sales", "Sale", "BASE TABLE"],
         ["Shop", "sys", "trace_xe_action_map", "BASE TABLE"],
     ])
     write(d, "COLUMNS", ["TABLE_SCHEMA", "TABLE_NAME", "COLUMN_NAME", "ORDINAL_POSITION", "IS_NULLABLE",
                          "DATA_TYPE", "CHARACTER_MAXIMUM_LENGTH", "NUMERIC_PRECISION", "NUMERIC_SCALE",
-                         "DATETIME_PRECISION"], [
-        ["dbo", "Customer", "CustomerId", 1, "NO", "int", "", 10, 0, ""],
-        ["dbo", "Customer", "Name", 2, "NO", "nvarchar", 200, "", "", ""],
-        ["dbo", "Customer", "Guid", 3, "YES", "uniqueidentifier", "", "", "", ""],
-        ["dbo", "Customer", "Since", 4, "YES", "date", "", "", "", 0],
-        ["dbo", "Customer", "IsVip", 5, "NO", "bit", "", "", "", ""],
-        ["dbo", "Order", "OrderId", 1, "NO", "bigint", "", 19, 0, ""],
-        ["dbo", "Order", "CustomerId", 2, "NO", "int", "", 10, 0, ""],
-        ["dbo", "Order", "Created", 3, "NO", "datetime2", "", "", "", 7],
-        ["dbo", "Order", "Total", 4, "YES", "money", "", 19, 4, ""],
-        ["dbo", "Order", "Comment", 5, "YES", "nvarchar", -1, "", "", ""],
-        ["dbo", "Order", "RowVer", 6, "NO", "timestamp", 8, "", "", ""],
-        ["dbo", "Order", "ShipTime", 7, "YES", "time", "", "", "", 0],
-        ["dbo", "AuditLog", "At", 1, "NO", "datetimeoffset", "", "", "", 7],
-        ["dbo", "AuditLog", "Data", 2, "YES", "sql_variant", "", "", "", ""],
-        ["dbo", "vOrderTotals", "CustomerId", 1, "NO", "int", "", 10, 0, ""],
+                         "DATETIME_PRECISION", "COLLATION_NAME"], [
+        ["dbo", "Customer", "CustomerId", 1, "NO", "int", "", 10, 0, "", ""],
+        ["dbo", "Customer", "Name", 2, "NO", "nvarchar", 200, "", "", "", "Cyrillic_General_CI_AS"],
+        ["dbo", "Customer", "Guid", 3, "YES", "uniqueidentifier", "", "", "", "", ""],
+        ["dbo", "Customer", "Since", 4, "YES", "date", "", "", "", 0, ""],
+        ["dbo", "Customer", "IsVip", 5, "NO", "bit", "", "", "", "", ""],
+        ["dbo", "Order", "OrderId", 1, "NO", "bigint", "", 19, 0, "", ""],
+        ["dbo", "Order", "CustomerId", 2, "NO", "int", "", 10, 0, "", ""],
+        ["dbo", "Order", "Created", 3, "NO", "datetime2", "", "", "", 7, ""],
+        ["dbo", "Order", "Total", 4, "YES", "money", "", 19, 4, "", ""],
+        ["dbo", "Order", "Comment", 5, "YES", "nvarchar", -1, "", "", "", "Cyrillic_General_CI_AS"],
+        ["dbo", "Order", "RowVer", 6, "NO", "timestamp", 8, "", "", "", ""],
+        ["dbo", "Order", "ShipTime", 7, "YES", "time", "", "", "", 0, ""],
+        ["dbo", "AuditLog", "At", 1, "NO", "datetimeoffset", "", "", "", 7, ""],
+        ["dbo", "AuditLog", "Data", 2, "YES", "sql_variant", "", "", "", "", ""],
+        ["dbo", "vOrderTotals", "CustomerId", 1, "NO", "int", "", 10, 0, "", ""],
+        ["dbo", "Country", "Code", 1, "NO", "nvarchar", 2, "", "", "", "Cyrillic_General_CI_AS"],
+        ["dbo", "Country", "Name", 2, "NO", "nvarchar", 100, "", "", "", "Cyrillic_General_CI_AS"],
+        ["dbo", "Country", "Capital", 3, "YES", "varchar", 50, "", "", "", "Cyrillic_General_CI_AS"],  # cp1251
+        ["sales", "Sale", "SaleId", 1, "NO", "bigint", "", 19, 0, "", ""],
+        ["sales", "Sale", "SaleDate", 2, "NO", "date", "", "", "", 0, ""],
+        ["sales", "Sale", "Amount", 3, "YES", "decimal", "", 18, 2, "", ""],
     ])
     write(d, "TABLE_CONSTRAINTS", ["CONSTRAINT_SCHEMA", "CONSTRAINT_NAME", "TABLE_SCHEMA", "TABLE_NAME",
                                    "CONSTRAINT_TYPE"], [
         ["dbo", "PK_Customer", "dbo", "Customer", "PRIMARY KEY"],
         ["dbo", "PK_Order", "dbo", "Order", "PRIMARY KEY"],
         ["dbo", "FK_Order_Customer", "dbo", "Order", "FOREIGN KEY"],
+        ["dbo", "PK_Country", "dbo", "Country", "PRIMARY KEY"],
+        ["sales", "PK_Sale", "sales", "Sale", "PRIMARY KEY"],
     ])
     write(d, "KEY_COLUMN_USAGE", ["CONSTRAINT_SCHEMA", "CONSTRAINT_NAME", "TABLE_SCHEMA", "TABLE_NAME",
                                   "COLUMN_NAME", "ORDINAL_POSITION"], [
         ["dbo", "PK_Customer", "dbo", "Customer", "CustomerId", 1],
         ["dbo", "PK_Order", "dbo", "Order", "OrderId", 1],
         ["dbo", "FK_Order_Customer", "dbo", "Order", "CustomerId", 1],
+        ["dbo", "PK_Country", "dbo", "Country", "Code", 1],
+        ["sales", "PK_Sale", "sales", "Sale", "SaleId", 1],
+        ["sales", "PK_Sale", "sales", "Sale", "SaleDate", 2],
+    ])
+    write(d, "PARTITIONS", ["TABLE_SCHEMA", "TABLE_NAME", "COLUMN_NAME", "FUNCTION_NAME", "RANGE_RIGHT",
+                            "BOUNDARY_ID", "BOUNDARY_VALUE", "VALUE_TYPE"], [
+        ["sales", "Sale", "SaleDate", "pfSaleYear", 1, 1, "2025-01-01T00:00:00", "date"],
+        ["sales", "Sale", "SaleDate", "pfSaleYear", 1, 2, "2026-01-01T00:00:00", "date"],
     ])
     write(d, "REFERENTIAL_CONSTRAINTS", ["CONSTRAINT_SCHEMA", "CONSTRAINT_NAME", "UNIQUE_CONSTRAINT_SCHEMA",
                                          "UNIQUE_CONSTRAINT_NAME"],
@@ -173,6 +213,11 @@ def mssql() -> None:
         ["dbo", "fn_Vat", "SQL_SCALAR_FUNCTION", 12],
     ])
     data = HERE / "mssql_data"
+    write(data, "dbo_Country", ["Code", "Name"], [["ru", "Россия"], ["KZ", "Казахстан"]])
+    write(data, "dbo_Country_update", ["Code", "Name"], [["RU", "Российская Федерация"]])
+    write(data, "etalon_dbo_Country", ["Code"], [["RU"], ["kz"]])
+    write(data, "sales_Sale", ["SaleId", "SaleDate", "Amount"], [
+        [1, "2024-12-31", "10.00"], [2, "2025-06-01", "20.50"], [3, "2026-02-01", "5"]])
     write(data, "dbo_Order", ["OrderId", "CustomerId", "Created", "Total", "Comment", "RowVer", "ShipTime"], [
         [100, 1, "2026-05-01 09:00:00.1234567", "10.5000", "без НДС", "0x00000000000007D1", "10:15:00"],
         [101, 2, "2026-05-02T18:30:00", "", "", "0x00000000000007D2", ""],

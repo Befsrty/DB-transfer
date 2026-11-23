@@ -111,7 +111,7 @@ uv run dbtransfer ui
 ```
 uv run dbtransfer tables                          # какие таблицы BW выгрузить и как (подробно: docs/bw-export.md)
 uv run dbtransfer tables --source oracle          # запросы к словарю Oracle (или --source mssql)
-uv run dbtransfer import <папка> --source oracle  # модель по словарю Oracle (docs/rdbms-import.md)
+uv run dbtransfer import <папка> --source oracle  # модель по словарю Oracle, таблицы 1:1 с секциями (docs/rdbms-import.md)
 uv run dbtransfer import                          # импорт demo/bw_export -> demo/model.json, demo/out/import_check.xlsx
 uv run dbtransfer report                          # отчёт о сложности -> demo/out/complexity.xlsx
 uv run dbtransfer scope --from ZSD_A02            # состав переноса: поток от ZSD_A02 вниз до источников

@@ -168,6 +168,12 @@ def assess(model: Model) -> Report:
         label = ADSO_LABELS[adso.kind] if model.is_bw else TABLE_LABELS.get(adso.kind, ADSO_LABELS[adso.kind])
         objects.append(Assessment(type=label, name=adso.name, level=1,
                                   reasons=["генерируется автоматически"], description=adso.description))
+    for t in sorted(model.tables.values(), key=lambda t: t.key_name):
+        reasons = ["генерируется автоматически, данные загружаются напрямую"]
+        if t.partitioning is not None:
+            reasons.append(f"секционирование {t.partitioning.kind} ({len(t.partitioning.partitions)} секций)")
+        objects.append(Assessment(type=TABLE_LABELS[AdsoKind.STANDARD if t.key else AdsoKind.STAGING],
+                                  name=t.key_name, level=1, reasons=reasons, description=t.description))
     flat_files = []
     for ds in sorted(model.datasources.values(), key=lambda d: d.ref.key):
         if not model.is_bw:

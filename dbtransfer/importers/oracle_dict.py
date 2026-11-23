@@ -18,6 +18,7 @@ from pathlib import Path
 from dbtransfer.config import source_tables
 from dbtransfer.importers.csv_reader import TableFile
 from dbtransfer.importers.rdbms_dict import (
+    TARGET_TABLE,
     Catalog,
     DictImportFailed,
     ForeignKey,
@@ -32,7 +33,7 @@ from dbtransfer.importers.rdbms_dict import (
     sql_in_list,
     to_int,
 )
-from dbtransfer.model import Model, ObjectType, SourceKind
+from dbtransfer.model import Model, ObjectType, Partition, Partitioning, SourceKind
 
 HOW = ("запросом из `dbtransfer tables --source oracle`",
        "Добавьте колонки в запрос выгрузки или поправьте dbtransfer/rules/oracle_dict.yaml")
@@ -66,6 +67,12 @@ ORACLE_QUERIES = {
                    "AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE', 'TRIGGER', 'TYPE', 'MATERIALIZED VIEW')",
     "ALL_SOURCE": f"SELECT OWNER, NAME, TYPE, COUNT(*) AS LINES FROM ALL_SOURCE WHERE {_OWNER} "
                   "GROUP BY OWNER, NAME, TYPE",
+    "ALL_PART_TABLES": f"SELECT OWNER, TABLE_NAME, PARTITIONING_TYPE, SUBPARTITIONING_TYPE, INTERVAL "
+                       f"FROM ALL_PART_TABLES WHERE {_OWNER}",
+    "ALL_PART_KEY_COLUMNS": f"SELECT OWNER, NAME, OBJECT_TYPE, COLUMN_NAME, COLUMN_POSITION FROM ALL_PART_KEY_COLUMNS "
+                            f"WHERE {_OWNER} AND TRIM(OBJECT_TYPE) = 'TABLE'",
+    "ALL_TAB_PARTITIONS": "SELECT TABLE_OWNER, TABLE_NAME, PARTITION_NAME, PARTITION_POSITION, HIGH_VALUE "
+                          "FROM ALL_TAB_PARTITIONS WHERE TABLE_OWNER IN ({schemas})",
 }
 
 ORACLE_HELP = """\
@@ -105,7 +112,8 @@ def map_type(data_type: str, length: int, char_length: int, precision: str, scal
     t = data_type.strip().upper()
     if t in _TEXT:
         n = char_length or length
-        return f"{t}({n})", "CHAR", n, 0, True
+        # CHAR(n) дополняется пробелами и сравнивается без них: в Greenplum так же ведёт себя char(n)
+        return f"{t}({n})", "FIXCHAR" if t in ("CHAR", "NCHAR") else "CHAR", n, 0, True
     if t in _LOB_TEXT or t == "ROWID" or t == "UROWID":
         return t, "STRING", 0, 0, True
     if t == "NUMBER":
@@ -115,7 +123,8 @@ def map_type(data_type: str, length: int, char_length: int, precision: str, scal
             return "NUMBER", "NUMERIC", 0, 0, True
         p, s = to_int(precision), to_int(scale)
         shown = f"NUMBER({p},{s})" if s else f"NUMBER({p})"
-        if s <= 0 and (it := integer_type(p)):
+        # NUMBER(p,-s) — целые до p+s знаков (NUMBER(9,-2) до 99 999 999 900)
+        if s <= 0 and (it := integer_type(p - s)):
             return shown, it, p, 0, True
         if s < 0 or s > p:  # NUMBER(5,-2), NUMBER(3,5): точно не представимы, берём numeric без ограничений
             return shown, "NUMERIC", 0, 0, True
@@ -134,6 +143,117 @@ def map_type(data_type: str, length: int, char_length: int, precision: str, scal
     return t, re.sub(r"\(\d+\)", "", t), 0, 0, False
 
 
+_FRACTION = re.compile(r"^TIMESTAMP\((\d+)\)")
+
+
+def type_caveat(data_type: str, precision: str, scale: str) -> tuple[str, bool]:
+    """Чем перенос отличается от Oracle (строки ⚠ справочника типов): (пояснение, меняются ли значения)."""
+    t = data_type.strip().upper()
+    if (m := _FRACTION.match(t)) and int(m.group(1)) > 6:
+        return (f"{t}: доли секунды точнее микросекунд, при загрузке округляются до 6 знаков; "
+                "сверка по таким колонкам — до микросекунд"), True
+    if _TIMESTAMP_TZ.match(t) and "LOCAL" not in t:
+        return (f"{t}: timestamptz хранит момент времени в UTC, исходный часовой пояс (регион или смещение) "
+                "не сохраняется; если он нужен, перенесите его отдельной колонкой"), True
+    if t == "NUMBER" and precision.strip():
+        p, s = to_int(precision), to_int(scale)
+        if s < 0 or s > p:
+            kept = "целым числом" if s < 0 else "numeric без ограничений"
+            return (f"NUMBER({p},{s}): масштаб вне 0..точности, перенесено {kept}; "
+                    "округление при записи, которое делал Oracle, теперь не выполняется"), False
+    if t == "NUMBER" and not precision.strip() and not scale.strip():
+        return "NUMBER без точности: перенесено как numeric без ограничений, сверка как чисел", False
+    if t in ("ROWID", "UROWID"):
+        return f"{t} — физический адрес строки Oracle, в новой базе не имеет смысла; переносится как текст", False
+    if t in ("CHAR", "NCHAR"):
+        return f"{t}: дополнение пробелами справа сохраняется (char(n)), сравнение без учёта этих пробелов", False
+    return "", False
+
+
+# --- секционирование ---
+
+_TO_DATE = re.compile(r"^TO_DATE\(\s*'\s*([^']+?)\s*'", re.I)
+_TS_LITERAL = re.compile(r"^(TIMESTAMP|DATE)\s*'\s*([^']+?)\s*'$", re.I)
+_NUMBER = re.compile(r"^[-+]?\d+(\.\d+)?$")
+
+
+def split_values(text: str) -> list[str]:
+    """Значения через запятую на верхнем уровне: TO_DATE('…', '…'), 100 -> два значения."""
+    parts, depth, quoted, cur = [], 0, False, ""
+    for ch in text:
+        if ch == "'":
+            quoted = not quoted
+        elif not quoted and ch == "(":
+            depth += 1
+        elif not quoted and ch == ")":
+            depth -= 1
+        elif not quoted and depth == 0 and ch == ",":
+            parts.append(cur.strip())
+            cur = ""
+            continue
+        cur += ch
+    if cur.strip():
+        parts.append(cur.strip())
+    return parts
+
+
+def bound_literal(value: str) -> str | None:
+    """HIGH_VALUE Oracle -> литерал SQL Greenplum; None — не разобрано."""
+    v = value.strip()
+    if v.upper() in ("MAXVALUE", "DEFAULT"):
+        return v.upper()
+    if m := _TO_DATE.match(v):
+        return f"TIMESTAMP '{m.group(1)}'"
+    if m := _TS_LITERAL.match(v):
+        return f"TIMESTAMP '{m.group(2)}'"
+    if _NUMBER.match(v):
+        return v
+    if v.startswith("'") and v.endswith("'"):
+        return v
+    if v.upper() == "NULL":
+        return "NULL"
+    return None
+
+
+def partitioning_from(kind: str, sub: str, interval: str, columns: list[str], parts: list[tuple[str, str]],
+                      table: str) -> tuple[Partitioning | None, str]:
+    """Секционирование таблицы и замечание для импорта."""
+    kind = kind.upper()
+    if kind == "HASH":
+        return None, (f"Таблица {table} секционирована по HASH ({', '.join(columns)}) в Oracle: в Greenplum это "
+                      "делает распределение, секции не создаются")
+    if kind not in ("RANGE", "LIST"):
+        return None, f"Секционирование {kind} таблицы {table} в Greenplum не переносится"
+    if not parts:
+        return None, (f"У секционированной таблицы {table} нет секций в ALL_TAB_PARTITIONS: "
+                      "секционирование не перенесено")
+    partitions = []
+    for name, high in parts:
+        values = [bound_literal(v) for v in split_values(high)]
+        if any(v is None for v in values) or not values:
+            return None, (f"Граница секции {name} таблицы {table} не разобрана ({high}): секционирование "
+                          "не перенесено, задайте его вручную")
+        if kind == "RANGE" and len(values) > 1 and len(columns) > 1:
+            return None, (f"Таблица {table} секционирована по нескольким колонкам ({', '.join(columns)}): "
+                          "в Greenplum 6 так нельзя, секционирование не перенесено")
+        partitions.append(Partition(name=name, values=values))
+    notes = []
+    if interval.strip():
+        # Oracle сам заводит секции под новые значения, Greenplum — нет: без секции по умолчанию строка
+        # за последней границей не загрузится
+        if not partitions[-1].is_default:
+            partitions.append(Partition(name="P_DEFAULT", values=["MAXVALUE"]))
+        notes.append(f"интервальное секционирование Oracle (INTERVAL {interval.strip()}): перенесены существующие "
+                     "секции и добавлена секция по умолчанию для новых значений; новые секции создавайте заранее "
+                     "(ALTER TABLE ... SPLIT DEFAULT PARTITION)")
+    if sub.strip().upper() not in ("", "NONE"):
+        notes.append(f"подсекции {sub.strip().upper()} не перенесены")
+    note = "; ".join(notes)
+    return (Partitioning(kind=kind, columns=columns, partitions=partitions, note=note),
+            f"Таблица {table}: секционирование {kind} ({', '.join(columns)}), секций {len(partitions)}"
+            + (f"; {note}" if note else ""))
+
+
 # --- разбор словаря ---
 
 def catalog_from(files: dict[str, TableFile], keep) -> Catalog:
@@ -149,10 +269,11 @@ def catalog_from(files: dict[str, TableFile], keep) -> Catalog:
                                                             to_int(r["CHAR_LENGTH"]), r["DATA_PRECISION"],
                                                             r["DATA_SCALE"])
         key = (r["OWNER"], r["TABLE_NAME"])
+        caveat, lossy = type_caveat(r["DATA_TYPE"], r["DATA_PRECISION"], r["DATA_SCALE"])
         columns[key].append(SourceColumn(
             name=r["COLUMN_NAME"], position=to_int(r["COLUMN_ID"]), native_type=shown, datatype=datatype,
             length=length, decimals=decimals, nullable=r["NULLABLE"].upper() != "N",
-            comment=col_comments.get((*key, r["COLUMN_NAME"]), ""), known=known))
+            comment=col_comments.get((*key, r["COLUMN_NAME"]), ""), known=known, caveat=caveat, lossy=lossy))
 
     cons_columns: dict[tuple[str, str], list[tuple[int, str]]] = defaultdict(list)
     for r in rows("ALL_CONS_COLUMNS"):
@@ -161,6 +282,17 @@ def catalog_from(files: dict[str, TableFile], keep) -> Catalog:
     owner_of = {(r["OWNER"], r["CONSTRAINT_NAME"]): f"{r['OWNER']}.{r['TABLE_NAME']}" for r in constraints}
 
     mviews = {(r["OWNER"], r["OBJECT_NAME"]) for r in rows("ALL_OBJECTS") if r["OBJECT_TYPE"] == "MATERIALIZED VIEW"}
+    part_tables = {(r["OWNER"], r["TABLE_NAME"]): r for r in rows("ALL_PART_TABLES")}
+    part_keys: dict[tuple[str, str], list[tuple[int, str]]] = defaultdict(list)
+    for r in rows("ALL_PART_KEY_COLUMNS"):
+        if r.get("OBJECT_TYPE", "TABLE").strip().upper() == "TABLE":
+            part_keys[(r["OWNER"], r["NAME"])].append((to_int(r["COLUMN_POSITION"]), r["COLUMN_NAME"]))
+    part_bounds: dict[tuple[str, str], list[tuple[int, str, str]]] = defaultdict(list)
+    f = files.get("ALL_TAB_PARTITIONS")
+    for r in (f.rows if f is not None and f.usable else []):
+        if keep(r["TABLE_OWNER"]):
+            part_bounds[(r["TABLE_OWNER"], r["TABLE_NAME"])].append(
+                (to_int(r["PARTITION_POSITION"]), r["PARTITION_NAME"], r["HIGH_VALUE"]))
     catalog = Catalog()
     tables: dict[tuple[str, str], SourceTable] = {}
     for r in rows("ALL_TABLES"):
@@ -168,9 +300,16 @@ def catalog_from(files: dict[str, TableFile], keep) -> Catalog:
         if key in mviews:  # таблица-контейнер материализованного представления: оно попадёт в прочие объекты
             continue
         t = SourceTable(schema=key[0], name=key[1], columns=columns.get(key, []), comment=tab_comments.get(key, ""))
-        if r.get("PARTITIONED").upper() == "YES":
-            t.notes.append(f"Таблица {t.full_name} секционирована в Oracle: секционирование в Greenplum "
-                           "задаётся вручную (PARTITION BY)")
+        if r.get("PARTITIONED").upper() == "YES" and key not in part_tables:
+            t.notes.append(f"Таблица {t.full_name} секционирована в Oracle, но в выгрузке нет ALL_PART_TABLES: "
+                           "секционирование не перенесено")
+        elif key in part_tables:
+            pt = part_tables[key]
+            cols = [c for _, c in sorted(part_keys.get(key, []))]
+            parts = [(n, h) for _, n, h in sorted(part_bounds.get(key, []))]
+            t.partitioning, note = partitioning_from(pt["PARTITIONING_TYPE"], pt.get("SUBPARTITIONING_TYPE"),
+                                                     pt.get("INTERVAL"), cols, parts, t.full_name)
+            t.notes.append(note)
         if r.get("TEMPORARY").upper() == "Y":
             t.notes.append(f"Таблица {t.full_name} временная (GLOBAL TEMPORARY) в Oracle, переносится как обычная")
         tables[key] = t
@@ -231,12 +370,14 @@ def connect(url: str, password: str | None = None):
 
 
 def import_oracle_dict(folder: Path | str | None = None, *, conn=None, schemas: Iterable[str] | None = None,
-                       system: str = "ORACLE", encoding: str | None = None, delimiter: str | None = None) -> Model:
+                       system: str = "ORACLE", encoding: str | None = None, delimiter: str | None = None,
+                       target: str = TARGET_TABLE) -> Model:
     """Построить модель по словарю Oracle: из папки CSV или через открытое подключение conn.
 
     schemas: какие схемы переносить; по умолчанию все, кроме служебных (SYS, SYSTEM, ...).
     Для подключения список схем обязателен: запросы к ALL_* по всей базе слишком тяжёлые.
     system: имя исходной системы у DataSource (как LOGSYS в BW), например имя базы.
+    target: table — таблица 1:1 с исходным именем, adso — поток DataSource → ADSO как в BW.
     """
     specs = source_tables(SourceKind.ORACLE)
     schemas = [s for s in schemas or [] if s.strip()]
@@ -252,4 +393,4 @@ def import_oracle_dict(folder: Path | str | None = None, *, conn=None, schemas: 
         files = read_folder(folder, specs, HOW, encoding, delimiter)
         source = str(folder)
     catalog = catalog_from(files, schema_filter(schemas, SYSTEM_SCHEMAS))
-    return build_model(catalog, files, SourceKind.ORACLE, source, system, "ORACLE")
+    return build_model(catalog, files, SourceKind.ORACLE, source, system, "ORACLE", target)

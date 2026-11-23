@@ -10,8 +10,12 @@ CREATE TABLE IF NOT EXISTS {{ t.qname }} (
 
 WITH ({{ t.storage_options }}){% endif %}
 
-{% if t.distributed_by %}DISTRIBUTED BY ({{ t.distributed_by | join(", ") }}){% else %}DISTRIBUTED RANDOMLY{% endif %}{% endif %};
-COMMENT ON TABLE {{ t.qname }} IS {{ t.comment | sql_literal }};
+{% if t.distributed_by %}DISTRIBUTED BY ({{ t.distributed_by | join(", ") }}){% else %}DISTRIBUTED RANDOMLY{% endif %}{% if t.partition_sql %}
+
+{{ t.partition_sql }}{% endif %}{% elif t.partition_sql %}
+
+{{ t.partition_sql }}{% endif %};
+{{ t.after_sql }}COMMENT ON TABLE {{ t.qname }} IS {{ t.comment | sql_literal }};
 {% for c in t.columns %}
 COMMENT ON COLUMN {{ t.qname }}.{{ c.sql_name }} IS {{ c.comment | sql_literal }};
 {% endfor %}

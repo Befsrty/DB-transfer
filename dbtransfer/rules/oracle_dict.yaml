@@ -132,3 +132,45 @@ tables:
       NAME: {required: true}
       TYPE: {required: true}
       LINES: {required: true}
+
+  ALL_PART_TABLES:
+    group: Секционирование
+    purpose: Вид секционирования таблиц (RANGE, LIST, HASH, интервальное)
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      OWNER: {required: true}
+      TABLE_NAME: {required: true}
+      PARTITIONING_TYPE: {required: true}
+      SUBPARTITIONING_TYPE: {}
+      INTERVAL: {}
+
+  ALL_PART_KEY_COLUMNS:
+    group: Секционирование
+    purpose: Колонки ключа секционирования
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      OWNER: {required: true}
+      NAME: {required: true}
+      OBJECT_TYPE: {}
+      COLUMN_NAME: {required: true}
+      COLUMN_POSITION: {required: true}
+
+  ALL_TAB_PARTITIONS:
+    group: Секционирование
+    purpose: Секции и их границы (HIGH_VALUE)
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_OWNER: {required: true}
+      TABLE_NAME: {required: true}
+      PARTITION_NAME: {required: true}
+      PARTITION_POSITION: {required: true}
+      HIGH_VALUE: {required: true}

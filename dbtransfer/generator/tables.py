@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from dbtransfer import naming
+from dbtransfer.generator.partitions import partition_sql
 from dbtransfer.generator.sql import ident, qualified
 from dbtransfer.generator.types import RulesError, TypeRules, is_key_figure
-from dbtransfer.model import Adso, AdsoKind, DataSource, FieldDef, InfoObject, Model
+from dbtransfer.model import Adso, AdsoKind, DataSource, DbTable, FieldDef, InfoObject, Model
 
 ROLE_TEXT = {"inbound": "входящая таблица", "active": "активные данные", "change_log": "журнал изменений"}
 KIND_TEXT = {AdsoKind.STAGING: "staging", AdsoKind.STANDARD: "standard", AdsoKind.CUMULATIVE: "cumulative",
@@ -48,6 +49,8 @@ class TableDef:
     distributed_by: list[str] = field(default_factory=list)  # пусто — DISTRIBUTED RANDOMLY
     bw_object: str = ""
     role: str = ""
+    partition_sql: str = ""  # PARTITION BY ... после DISTRIBUTED BY (Greenplum) или после колонок (PostgreSQL)
+    after_sql: str = ""  # операторы после CREATE TABLE: секции PostgreSQL (PARTITION OF)
 
     @property
     def qname(self) -> str:
@@ -80,9 +83,11 @@ def iobj_field(iobj: InfoObject) -> FieldDef:
 
 
 class TableBuilder:
-    def __init__(self, model: Model, rules: TypeRules):
+    def __init__(self, model: Model, rules: TypeRules, dialect: str = "greenplum"):
         self.model = model
         self.rules = rules
+        self.dialect = dialect
+        self.warnings: list[str] = []
 
     def _apply_storage(self, table: TableDef, role: str, obj: str) -> None:
         table.storage = self.rules.storage_for(role, obj)
@@ -204,3 +209,43 @@ class TableBuilder:
         self._apply_storage(t, role, adso.name)
         self._apply_distribution(t, adso.name, key_cols[:1])
         return t
+
+    # --- таблица 1:1 (Oracle, MS SQL Server) ---
+    def db_table(self, t: DbTable) -> TableDef:
+        obj = t.key_name
+        columns = []
+        for f in sorted(t.fields, key=lambda x: x.position):
+            columns.append(Column(name=naming.db_name(f.name), type=self.rules.column_type(f, obj),
+                                  not_null=f.is_key or not f.nullable,
+                                  comment=f"{self.model.source_label}: {obj}.{f.name}"
+                                          + (f" {f.comment}" if f.comment else ""), field=f))
+        key_cols = [ident(naming.db_name(f.name)) for f in sorted(t.fields, key=lambda x: x.position) if f.is_key]
+        part_cols: list[str] = []
+        if t.partitioning is not None:
+            part_cols = [ident(naming.db_name(c)) for c in t.partitioning.columns]
+            if key_cols and not set(part_cols) <= set(key_cols):
+                self.warnings.append(f"{obj}: первичный ключ ({', '.join(key_cols)}) не включает колонки "
+                                     f"секционирования ({', '.join(part_cols)}), а Greenplum этого требует. "
+                                     "Таблица секционирована, PRIMARY KEY не объявлен; перезапись по ключу "
+                                     "при загрузке работает и без него")
+                key_cols_pk: list[str] = []
+            else:
+                key_cols_pk = key_cols
+        else:
+            key_cols_pk = key_cols
+        role = "table" if key_cols_pk else "table_nokey"
+        comment = f"{self.model.source_label}: таблица {obj}" + (f". {t.description}" if t.description else "")
+        table = TableDef(naming.db_table_schema(self.model, t), naming.db_table_name(t), columns, comment,
+                         primary_key=key_cols_pk, bw_object=f"Таблица {obj}", role=role)
+        table.storage = self.rules.storage_for(role, obj)
+        if table.storage != "heap" and table.primary_key:
+            table.storage = "heap"
+        table.storage_options = self.rules.storage_options.get(table.storage, "")
+        self._apply_distribution(table, obj, key_cols[:1])
+        if t.partitioning is not None and part_cols:
+            ps = partition_sql(t.partitioning, table.schema, table.name, part_cols, self.dialect == "greenplum")
+            table.partition_sql, table.after_sql = ps.clause, ps.after
+            self.warnings.extend(ps.warnings)
+            if t.partitioning.note:
+                self.warnings.append(f"{obj}: {t.partitioning.note}")
+        return table

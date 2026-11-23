@@ -37,6 +37,7 @@ tables:
       NUMERIC_PRECISION: {required: true}
       NUMERIC_SCALE: {required: true}
       DATETIME_PRECISION: {}
+      COLLATION_NAME: {}
 
   TABLE_CONSTRAINTS:
     group: Ключи
@@ -117,3 +118,20 @@ tables:
       ROUTINE_NAME: {required: true}
       ROUTINE_TYPE: {required: true}
       LINES: {}
+
+  PARTITIONS:
+    group: Секционирование
+    purpose: Функция секционирования, колонка и границы (sys.partition_functions, sys.partition_range_values)
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      TABLE_SCHEMA: {required: true}
+      TABLE_NAME: {required: true}
+      COLUMN_NAME: {required: true}
+      FUNCTION_NAME: {required: true}
+      RANGE_RIGHT: {required: true}
+      BOUNDARY_ID: {required: true}
+      BOUNDARY_VALUE: {required: true}
+      VALUE_TYPE: {}

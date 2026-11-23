@@ -14,6 +14,7 @@ from dbtransfer.generator import TypeRules, generate
 from dbtransfer.generator.tables import TableBuilder
 from dbtransfer.importers import mssql_dict, oracle_dict
 from dbtransfer.importers.bw_csv import ImportFailed
+from dbtransfer.importers.rdbms_dict import TARGET_ADSO
 from dbtransfer.importers.sources import export_help, import_model
 from dbtransfer.model import AdsoKind, Model, ObjectType, Severity, SourceKind
 from dbtransfer.runtime import check_sql, convert_sql, resolve_target
@@ -25,12 +26,12 @@ runner = CliRunner()
 
 @pytest.fixture(scope="module")
 def ora():
-    return oracle_dict.import_oracle_dict(DATA / "oracle_dict")
+    return oracle_dict.import_oracle_dict(DATA / "oracle_dict", target=TARGET_ADSO)
 
 
 @pytest.fixture(scope="module")
 def ms():
-    return mssql_dict.import_mssql_dict(DATA / "mssql_dict")
+    return mssql_dict.import_mssql_dict(DATA / "mssql_dict", target=TARGET_ADSO)
 
 
 def messages(model: Model, severity: Severity) -> list[str]:
@@ -117,11 +118,11 @@ def test_oracle_issues_and_others(ora):
 
 def test_schema_filter():
     model = oracle_dict.import_oracle_dict(DATA / "oracle_dict", schemas=["sys"])
-    assert list(model.adsos) == ["SYS_AUD$"]
+    assert list(model.tables) == ["SYS.AUD$"] and not model.adsos
 
 
 def test_mssql_model(ms):
-    assert sorted(ms.adsos) == ["dbo_AuditLog", "dbo_Customer", "dbo_Order"]
+    assert sorted(ms.adsos) == ["dbo_AuditLog", "dbo_Country", "dbo_Customer", "dbo_Order", "sales_Sale"]
     order = ms.adsos["dbo_Order"]
     assert order.key == ["OrderId"] and order.description == "Заказы интернет-магазина"
     assert {f.name: f.datatype for f in order.fields} == {
@@ -157,7 +158,7 @@ def test_reserved_and_long_names(tmp_path):
         csv.writer(f).writerow(["SALES", "T" * 60, "ID", 1, "NUMBER", 22, 0, 10, 0, "Y"])
     with (tmp_path / "ALL_TABLES.csv").open("a", encoding="utf-8", newline="") as f:
         csv.writer(f).writerow(["SALES", "T" * 60, "NO", "", "N"])
-    model = oracle_dict.import_oracle_dict(tmp_path)
+    model = oracle_dict.import_oracle_dict(tmp_path, target=TARGET_ADSO)
     errors = messages(model, Severity.ERROR)
     assert any("LOAD_ID" in m and "служебной" in m for m in errors)
     assert any("длиннее 63" in m for m in messages(model, Severity.WARNING))
@@ -182,8 +183,9 @@ class FakeCursor:
         self.description = [(h,) for h in data[0]]
         self.rows = [tuple(None if v == "" else v for v in r) for r in data[1:]]
 
-    def fetchall(self):
-        return self.rows
+    def fetchmany(self, size):
+        chunk, self.rows = self.rows[:size], self.rows[size:]
+        return chunk
 
     def close(self):
         pass
@@ -199,7 +201,7 @@ class FakeConn:
 
 def test_live_connection_matches_folder(ora):
     conn = FakeConn(DATA / "oracle_dict")
-    live = oracle_dict.import_oracle_dict(conn=conn, schemas=["SALES"])
+    live = oracle_dict.import_oracle_dict(conn=conn, schemas=["SALES"], target=TARGET_ADSO)
     assert sorted(live.adsos) == sorted(ora.adsos)
     assert live.adsos["SALES_ORDERS"] == ora.adsos["SALES_ORDERS"]
     assert all("OWNER IN ('SALES')" in sql for sql in conn.cursor_obj.sql)
@@ -263,7 +265,7 @@ def test_cli_import_oracle(tmp_path):
     assert runner.invoke(app, ["init", str(tmp_path)]).exit_code == 0
     result = runner.invoke(app, ["import", str(tmp_path / "dict"), "--source", "oracle", "-p", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    assert "Oracle: таблиц 4 (без ключа 1)" in result.output
+    assert "Oracle: таблиц 4 (без ключа 1, секционированных 2)" in result.output
     assert Model.load(tmp_path / "model.json").source_kind == SourceKind.ORACLE
     result = runner.invoke(app, ["report", "-p", str(tmp_path)])
     assert result.exit_code == 0 and (tmp_path / "out" / "complexity.xlsx").is_file()

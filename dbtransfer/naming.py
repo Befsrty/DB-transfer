@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 from dbtransfer.config import RULES_DIR
-from dbtransfer.model import Adso, AdsoKind, DataSource, Model, ObjectType
+from dbtransfer.model import Adso, AdsoKind, DataSource, DbTable, Model, ObjectType
 
 
 @cache
@@ -44,10 +44,22 @@ def adso_layer(model: Model, adso: Adso) -> str:
     return "dwh" if feeds_adso else "mart"
 
 
-def data_table(model: Model, obj: Adso | DataSource) -> str:
+def db_table_schema(model: Model, t: DbTable) -> str:
+    return load_naming()["schemas"]["source"].format(prefix=model.schema_prefix, schema=t.schema_name.lower())
+
+
+def db_table_name(t: DbTable) -> str:
+    return load_naming()["tables"]["db_table"].format(name=t.name.lower())
+
+
+def data_table(model: Model, obj: Adso | DataSource | DbTable) -> str:
     """Таблица, где лежат данные объекта (ТЗ, ФП-4.6): активные для ADSO, входящая для staging,
-    входная для DataSource. Полное имя схема.таблица."""
+    входная для DataSource, сама таблица при переносе 1:1. Полное имя схема.таблица."""
+    from dbtransfer.generator.sql import qualified
+
     prefix = model.schema_prefix
+    if isinstance(obj, DbTable):
+        return qualified(db_table_schema(model, obj), db_table_name(obj))
     if isinstance(obj, DataSource):
         return f"{schema('stg', prefix)}.{table('datasource', obj.name)}"
     if obj.kind == AdsoKind.STAGING:

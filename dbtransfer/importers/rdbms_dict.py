@@ -31,12 +31,14 @@ from dbtransfer.model import (
     Adso,
     AdsoKind,
     DataSource,
+    DbTable,
     Dtp,
     FieldDef,
     Model,
     ObjectRef,
     ObjectType,
     OtherObject,
+    Partitioning,
     Rule,
     RuleKind,
     Severity,
@@ -66,6 +68,8 @@ class SourceColumn:
     nullable: bool = True
     comment: str = ""
     known: bool = True  # тип распознан; иначе колонка переносится как text
+    caveat: str = ""  # чем перенос типа отличается от источника (⚠ в справочнике типов)
+    lossy: bool = False  # значения меняются при переносе (точность, часовой пояс) — предупреждение, а не сведение
 
 
 @dataclass
@@ -78,6 +82,8 @@ class SourceTable:
     key_kind: str = ""  # первичный, уникальный или пусто
     key_constraint: str = ""
     notes: list[str] = field(default_factory=list)  # сведения для замечаний импорта
+    partitioning: Partitioning | None = None
+    ci_columns: list[str] = field(default_factory=list)  # текстовые колонки с регистронезависимой сортировкой
 
     @property
     def full_name(self) -> str:
@@ -118,6 +124,7 @@ class Catalog:
     tables: list[SourceTable] = field(default_factory=list)
     objects: list[SourceObject] = field(default_factory=list)
     foreign_keys: list[ForeignKey] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)  # сведения о базе целиком
 
 
 # --- чтение представлений словаря ---
@@ -142,6 +149,37 @@ def _text(value: object) -> str:
     return str(value)
 
 
+FETCH_ROWS = 5000  # строк за одно обращение к базе: словарь на 10 000 таблиц — сотни тысяч строк колонок
+
+
+def _fetch(conn, sql: str, spec: BwTable) -> list[Row]:
+    """Строки запроса порциями по FETCH_ROWS: драйвер не держит весь результат второй копией,
+    а для oracledb большая порция заметно сокращает число обращений к серверу (по умолчанию 100)."""
+    cur = conn.cursor()
+    try:
+        for attr in ("arraysize", "prefetchrows"):  # oracledb; у pymssql arraysize тоже есть
+            if hasattr(cur, attr):
+                try:
+                    setattr(cur, attr, FETCH_ROWS)
+                except Exception:  # noqa: BLE001, S110 — не у всех драйверов свойство изменяемое
+                    pass
+        cur.execute(sql)
+        header = [d[0].upper() for d in cur.description]
+        missing = [c for c in spec.required_columns if c not in header]
+        if missing:
+            raise DictImportFailed(f"Запрос к {spec.name} не вернул колонки {', '.join(missing)}")
+        index = {h: i for i, h in enumerate(header)}
+        rows: list[Row] = []
+        line = 2
+        while chunk := cur.fetchmany(FETCH_ROWS):
+            for values in chunk:
+                rows.append(Row(line, index=index, cells=tuple(_text(v).rstrip() for v in values)))
+                line += 1
+        return rows
+    finally:
+        cur.close()
+
+
 def read_connection(conn, queries: dict[str, str], specs: dict[str, BwTable]) -> dict[str, TableFile]:
     """Выполнить запросы словаря через DB-API-подключение (oracledb, pymssql) и вернуть строки
     в том же виде, что при чтении CSV. Ошибка в необязательном запросе — замечание, не отказ."""
@@ -153,24 +191,15 @@ def read_connection(conn, queries: dict[str, str], specs: dict[str, BwTable]) ->
             files[name] = result
             continue
         try:
-            cur = conn.cursor()
-            try:
-                cur.execute(sql)
-                header = [d[0].upper() for d in cur.description]
-                data = cur.fetchall()
-            finally:
-                cur.close()
+            result.rows = _fetch(conn, sql, spec)
+        except DictImportFailed:
+            raise
         except Exception as e:  # noqa: BLE001 — драйверы бросают свои классы ошибок
             if spec.required:
                 raise DictImportFailed(f"Запрос к {name} не выполнен: {e}") from e
             result.issue(Severity.WARNING, f"Запрос к {name} не выполнен, сведения пропущены: {e}")
             files[name] = result
             continue
-        missing = [c for c in spec.required_columns if c not in header]
-        if missing:
-            raise DictImportFailed(f"Запрос к {name} не вернул колонки {', '.join(missing)}")
-        result.rows = [Row(line=i, values={h: _text(v).rstrip() for h, v in zip(header, values, strict=True)})
-                       for i, values in enumerate(data, start=2)]
         result.usable = True
         files[name] = result
     return files
@@ -203,8 +232,8 @@ def count_lines(text: str) -> int:
 
 # --- построение модели ---
 
-def _check_names(model: Model, t: SourceTable) -> None:
-    longest = naming.db_name(t.model_name) + LONGEST_SUFFIX
+def _check_names(model: Model, t: SourceTable, mode: str) -> None:
+    longest = naming.db_name(t.model_name) + LONGEST_SUFFIX if mode == TARGET_ADSO else naming.db_name(t.name)
     if len(longest) > MAX_IDENTIFIER:
         model.issue(Severity.WARNING, f"Имя {longest} длиннее {MAX_IDENTIFIER} символов: Greenplum его обрежет. "
                                       "Сократите имя таблицы в шаблонах naming.yaml или переименуйте при переносе",
@@ -215,7 +244,7 @@ def _check_names(model: Model, t: SourceTable) -> None:
         if db in seen:
             model.issue(Severity.ERROR, f"Колонки {seen[db]} и {c.name} дают одно имя {db} в целевой базе",
                         obj=t.full_name)
-        if db in SERVICE_COLUMNS:
+        if mode == TARGET_ADSO and db in SERVICE_COLUMNS:
             model.issue(Severity.ERROR, f"Колонка {c.name} совпадает со служебной колонкой {db} входных таблиц: "
                                         "переименуйте её при выгрузке (и в словаре, и в данных)", obj=t.full_name)
         seen[db] = c.name
@@ -227,9 +256,54 @@ def _field(c: SourceColumn, is_key: bool) -> FieldDef:
                     decimals=c.decimals, is_key=is_key, nullable=c.nullable and not is_key, comment=comment)
 
 
-def _add_table(model: Model, t: SourceTable, system: str, source_type: str) -> None:
+# Режимы переноса таблиц реляционного источника
+TARGET_TABLE = "table"  # одна таблица с исходным именем, загрузка напрямую (по умолчанию)
+TARGET_ADSO = "adso"  # как поток BW: входная таблица, ADSO standard, трансформация, активация
+TARGET_MODES = (TARGET_TABLE, TARGET_ADSO)
+
+
+def _check_table(model: Model, t: SourceTable, columns: list[SourceColumn], key: list[str], mode: str) -> None:
+    if len(key) != len(t.key):
+        model.issue(Severity.WARNING, f"Ключ {t.key_constraint} таблицы {t.full_name}: колонок "
+                                      f"{', '.join(k for k in t.key if k not in key)} нет среди колонок таблицы",
+                    obj=t.full_name)
+    for c in columns:
+        if not c.known:
+            model.issue(Severity.WARNING, f"Тип {c.native_type} колонки {t.full_name}.{c.name} не распознан: "
+                                          "колонка переносится как text. Тип задаётся в type_rules.yaml проекта",
+                        obj=t.full_name)
+    caveats: dict[tuple[str, bool], list[str]] = {}
+    for c in columns:
+        if c.caveat:
+            caveats.setdefault((c.caveat, c.lossy), []).append(c.name)
+    for (text, lossy), names in caveats.items():
+        model.issue(Severity.WARNING if lossy else Severity.INFO,
+                    f"Таблица {t.full_name}, {'колонки' if len(names) > 1 else 'колонка'} {', '.join(names)}: {text}",
+                    obj=t.full_name)
+    if t.key_kind == "уникальный":
+        nullable = [c.name for c in columns if c.name in key and c.nullable]
+        model.issue(Severity.INFO, f"У таблицы {t.full_name} нет первичного ключа, ключом взят уникальный "
+                                   f"{t.key_constraint} ({', '.join(key)})"
+                                   + (f"; колонки {', '.join(nullable)} допускают NULL, в ключе пустое значение "
+                                      "заменяется начальным" if nullable else ""), obj=t.full_name)
+    ci_key = [c for c in t.ci_columns if c in key]
+    if ci_key:
+        model.issue(Severity.WARNING, f"Колонки ключа {', '.join(ci_key)} таблицы {t.full_name} в источнике "
+                                      "сравниваются без учёта регистра (collation *_CI_*), а в Greenplum — с учётом. "
+                                      "Загрузка и сверка сравнивают их через lower(); соединения в своих запросах "
+                                      "тоже пишите через lower()", obj=t.full_name)
+    if not key:
+        what = ("загружается только добавлением строк, без перезаписи" if mode == TARGET_TABLE
+                else "переносится без активации (только входящая таблица)")
+        model.issue(Severity.WARNING, f"У таблицы {t.full_name} нет первичного и уникального ключа: она {what}, "
+                                      "сверка по ключу невозможна", obj=t.full_name)
+    for note in t.notes:
+        model.issue(Severity.INFO, note, obj=t.full_name)
+
+
+def _add_table(model: Model, t: SourceTable, system: str, source_type: str, mode: str) -> None:
     name = t.model_name
-    if name in model.adsos:
+    if name in model.adsos or t.full_name in model.tables:
         model.issue(Severity.ERROR, f"Таблица {t.full_name} совпадает по имени {name} с другой таблицей, пропущена",
                     obj=t.full_name, skipped=True)
         return
@@ -237,37 +311,26 @@ def _add_table(model: Model, t: SourceTable, system: str, source_type: str) -> N
         model.issue(Severity.WARNING, f"У таблицы {t.full_name} нет колонок в словаре, пропущена",
                     obj=t.full_name, skipped=True)
         return
-    _check_names(model, t)
+    _check_names(model, t, mode)
     columns = sorted(t.columns, key=lambda c: c.position)
     names = {c.name for c in columns}
     key = [k for k in t.key if k in names]
-    if len(key) != len(t.key):
-        model.issue(Severity.WARNING, f"Ключ {t.key_constraint} таблицы {t.full_name}: колонок "
-                                      f"{', '.join(k for k in t.key if k not in names)} нет среди колонок таблицы",
-                    obj=t.full_name)
-    for c in columns:
-        if not c.known:
-            model.issue(Severity.WARNING, f"Тип {c.native_type} колонки {t.full_name}.{c.name} не распознан: "
-                                          "колонка переносится как text. Тип задаётся в type_rules.yaml проекта",
-                        obj=t.full_name)
-    if t.key_kind == "уникальный":
-        nullable = [c.name for c in columns if c.name in key and c.nullable]
-        model.issue(Severity.INFO, f"У таблицы {t.full_name} нет первичного ключа, ключом взят уникальный "
-                                   f"{t.key_constraint} ({', '.join(key)})"
-                                   + (f"; колонки {', '.join(nullable)} допускают NULL, в ключе пустое значение "
-                                      "заменяется начальным" if nullable else ""), obj=t.full_name)
-    for note in t.notes:
-        model.issue(Severity.INFO, note, obj=t.full_name)
+    _check_table(model, t, columns, key, mode)
 
+    if mode == TARGET_TABLE:
+        model.tables[t.full_name] = DbTable(
+            schema_name=t.schema, name=t.name, description=t.comment, key_kind=t.key_kind,
+            fields=[_field(c, c.name in key) for c in columns], partitioning=t.partitioning,
+            ci_columns=[c for c in t.ci_columns if c in key])
+        return
+    if t.partitioning is not None:
+        model.issue(Severity.INFO, f"Секционирование таблицы {t.full_name} в режиме ADSO не переносится",
+                    obj=t.full_name)
     ds = DataSource(name=name, source_system=system, source_type=source_type,
                     description=t.comment or t.full_name,
                     fields=[_field(c, False) for c in columns])
     model.datasources[ds.ref.key] = ds
     kind = AdsoKind.STANDARD if key else AdsoKind.STAGING
-    if not key:
-        model.issue(Severity.WARNING, f"У таблицы {t.full_name} нет первичного и уникального ключа: она переносится "
-                                      "без активации (только входящая таблица), сверка по ключу невозможна",
-                    obj=t.full_name)
     adso = Adso(name=name, kind=kind, description=t.comment or t.full_name, info_area=t.schema,
                 fields=[_field(c, c.name in key) for c in columns])
     model.adsos[name] = adso
@@ -278,21 +341,28 @@ def _add_table(model: Model, t: SourceTable, system: str, source_type: str) -> N
     model.dtps[f"DTP_{name}"] = Dtp(name=f"DTP_{name}", source=ds.ref, target=adso.ref, mode="DELTA")
 
 
-def _related(text: str, tables: dict[str, SourceTable], schema: str) -> list[ObjectRef]:
-    """Таблицы, упомянутые в тексте представления: SCHEMA.TABLE или TABLE той же схемы."""
-    found = []
-    upper = re.sub(r'["\[\]]', "", text.upper())
-    for full, t in tables.items():
-        qualified = re.search(rf"(?<![\w$#]){re.escape(full.upper())}(?![\w$#])", upper)
-        local = t.schema.upper() == schema.upper() and re.search(
-            rf"(?<![\w$#.]){re.escape(t.name.upper())}(?![\w$#])", upper)
-        if qualified or local:
-            found.append(ObjectRef(type=ObjectType.ADSO, name=t.model_name))
-    return found
+_WORD = re.compile(r"[A-Z0-9_$#]+(?:\.[A-Z0-9_$#]+)?")
+
+
+def _related(text: str, by_name: dict[str, list[SourceTable]], schema: str, mode: str) -> list[ObjectRef]:
+    """Таблицы, упомянутые в тексте представления: SCHEMA.TABLE или TABLE той же схемы. Текст разбивается на
+    слова один раз, поэтому время не зависит от числа таблиц в словаре."""
+    words = set(_WORD.findall(re.sub(r'["\[\]]', "", text.upper())))
+    found: dict[str, SourceTable] = {}
+    for w in words:
+        owner, _, table = w.rpartition(".")
+        for t in by_name.get(table, []):
+            if (owner and owner == t.schema.upper()) or (not owner and t.schema.upper() == schema.upper()):
+                found[t.full_name] = t
+    return [ObjectRef(type=ObjectType.TABLE, name=t.full_name) if mode == TARGET_TABLE
+            else ObjectRef(type=ObjectType.ADSO, name=t.model_name)
+            for t in sorted(found.values(), key=lambda t: t.full_name)]
 
 
 def build_model(catalog: Catalog, files: dict[str, TableFile], kind: SourceKind, source: str, system: str,
-                source_type: str) -> Model:
+                source_type: str, mode: str = TARGET_TABLE) -> Model:
+    if mode not in TARGET_MODES:
+        raise DictImportFailed(f"Режим переноса «{mode}» неизвестен, допустимо: {', '.join(TARGET_MODES)}")
     model = Model(source=source, imported_at=datetime.now().replace(microsecond=0), source_kind=kind)
     for f in files.values():
         model.issues.extend(f.issues)
@@ -303,15 +373,22 @@ def build_model(catalog: Catalog, files: dict[str, TableFile], kind: SourceKind,
             "rows": len(f.rows),
             "status": "прочитан" if f.usable else ("нет файла" if f.path is None else "ошибка"),
         }
-    for t in sorted(catalog.tables, key=lambda t: (t.schema, t.name)):
-        _add_table(model, t, system, source_type)
-    tables = {t.full_name: t for t in catalog.tables if t.model_name in model.adsos}
+        f.rows = []  # строки уже разобраны в catalog; на большом словаре это сотни мегабайт
+    catalog.tables.sort(key=lambda t: (t.schema, t.name))
+    by_name: dict[str, list[SourceTable]] = {}
+    for t in catalog.tables:
+        _add_table(model, t, system, source_type, mode)
+        if t.model_name in model.adsos or t.full_name in model.tables:
+            by_name.setdefault(t.name.upper(), []).append(t)
+        t.columns = []  # колонки уже в модели, для поиска связей нужны только имена
     for o in sorted(catalog.objects, key=lambda o: (o.type.value, o.schema, o.name)):
         info = o.label + (f", строк: {o.lines}" if o.lines else "") + (f", статус {o.status}" if o.status else "")
-        related = _related(o.text, tables, o.schema) if o.text else []
+        related = _related(o.text, by_name, o.schema, mode) if o.text else []
         if related:
             info += ", таблицы: " + ", ".join(r.name for r in related)
         model.others.append(OtherObject(type=o.type, name=o.full_name, related=related, info=info, lines=o.lines))
+    for note in catalog.notes:
+        model.issue(Severity.INFO, note)
     for fk in catalog.foreign_keys:
         target = f" → {fk.ref_table}" if fk.ref_table else ""
         model.issue(Severity.INFO, f"Внешний ключ {fk.name} ({', '.join(fk.columns)}){target} не переносится: "

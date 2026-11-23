@@ -15,6 +15,7 @@ from dbtransfer.deploy import deploy
 from dbtransfer.generator import TypeRules, generate
 from dbtransfer.importers.mssql_dict import import_mssql_dict
 from dbtransfer.importers.oracle_dict import import_oracle_dict
+from dbtransfer.importers.rdbms_dict import TARGET_ADSO
 from dbtransfer.reconcile import reconcile
 from dbtransfer.runtime import LoadError, load_file, run_load
 
@@ -34,14 +35,14 @@ def conn():
     yield connection
     connection.rollback()
     with connection.cursor() as cur:
-        for layer in ("stg", "md", "dwh", "mart", "meta"):
+        for layer in ("stg", "md", "dwh", "mart", "meta", "sales", "dbo"):
             cur.execute(f"DROP SCHEMA IF EXISTS {PREFIX}_{layer} CASCADE")
     connection.commit()
     connection.close()
 
 
 def test_oracle_tables_flow(conn, tmp_path):
-    model = import_oracle_dict(DATA / "oracle_dict")
+    model = import_oracle_dict(DATA / "oracle_dict", target=TARGET_ADSO)
     model.schema_prefix = PREFIX
     rules = TypeRules.load()
     package = generate(model, rules, server_dialect(conn))
@@ -76,7 +77,7 @@ def test_oracle_tables_flow(conn, tmp_path):
 
 
 def test_oracle_load_rejects_bad_timestamp(conn, tmp_path):
-    model = import_oracle_dict(DATA / "oracle_dict")
+    model = import_oracle_dict(DATA / "oracle_dict", target=TARGET_ADSO)
     model.schema_prefix = PREFIX
     rules = TypeRules.load()
     assert deploy(conn, generate(model, rules, server_dialect(conn)), recreate=True).ok
@@ -88,7 +89,7 @@ def test_oracle_load_rejects_bad_timestamp(conn, tmp_path):
 
 
 def test_mssql_table_flow(conn):
-    model = import_mssql_dict(DATA / "mssql_dict")
+    model = import_mssql_dict(DATA / "mssql_dict", target=TARGET_ADSO)
     model.schema_prefix = PREFIX
     rules = TypeRules.load()
     package = generate(model, rules, server_dialect(conn))
@@ -101,3 +102,89 @@ def test_mssql_table_flow(conn):
     assert rows == [(100, "2026-05-01 09:00:00.123457", Decimal("10.5000"), "без НДС", "00000000000007d1",
                      "10:15:00"),
                     (101, "2026-05-02 18:30:00", None, "", "00000000000007d2", None)]
+
+
+# --- перенос 1:1 (режим по умолчанию) ---
+
+def test_oracle_partitioned_table_1to1(conn, tmp_path):
+    model = import_oracle_dict(DATA / "oracle_dict")
+    model.schema_prefix = PREFIX
+    rules = TypeRules.load()
+    package = generate(model, rules, server_dialect(conn))
+    result = deploy(conn, package, recreate=True)
+    assert result.ok, result.error
+    names = {r[0] for r in conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = %s", [f"{PREFIX}_sales"])}
+    conn.rollback()
+    assert {"orders", "customers", "order_lines", "log_events"} <= names
+    assert not any(n.endswith(("_inbound", "_active", "_changelog")) for n in names)
+
+    first = load_file(conn, model, rules, "SALES.ORDERS", DATA / "oracle_data" / "SALES_ORDERS.csv")
+    assert first.rows == 3
+    load_file(conn, model, rules, "SALES.ORDERS", DATA / "oracle_data" / "SALES_ORDERS_update.csv")
+    rows = conn.execute(f"SELECT order_id, amount, status FROM {PREFIX}_sales.orders ORDER BY 1").fetchall()
+    conn.rollback()
+    assert [(r[0], str(r[1]) if r[1] is not None else None, r[2]) for r in rows] == [
+        (1, "1500.50", "NEW"), (2, "250.00", "SHIPPED"), (3, None, "NEW"), (4, "99.99", "NEW")]
+    assert reconcile(conn, model, "SALES.ORDERS", DATA / "oracle_data" / "etalon_SALES_ORDERS.csv", tmp_path).ok
+
+    # Строки разошлись по секциям: в Greenplum и в PostgreSQL это отдельные таблицы-наследники
+    parts = conn.execute(f"SELECT count(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhparent "
+                         f"JOIN pg_namespace n ON n.oid = c.relnamespace "
+                         f"WHERE n.nspname = '{PREFIX}_sales' AND c.relname = 'orders'").fetchone()[0]
+    conn.rollback()
+    assert parts == 3
+
+
+def test_mssql_ci_key_upsert_and_reconcile(conn, tmp_path):
+    model = import_mssql_dict(DATA / "mssql_dict")
+    model.schema_prefix = PREFIX
+    rules = TypeRules.load()
+    package = generate(model, rules, server_dialect(conn))
+    assert deploy(conn, package, recreate=True).ok, "deploy"
+    load_file(conn, model, rules, "dbo.Country", DATA / "mssql_data" / "dbo_Country.csv")
+    load_file(conn, model, rules, "dbo.Country", DATA / "mssql_data" / "dbo_Country_update.csv")
+    rows = conn.execute(f"SELECT code, name FROM {PREFIX}_dbo.country ORDER BY lower(code)").fetchall()
+    conn.rollback()
+    # В MS SQL ключ без учёта регистра: RU заменил ru, а не добавился рядом
+    assert rows == [("KZ", "Казахстан"), ("RU", "Российская Федерация")]
+    assert reconcile(conn, model, "dbo.Country", DATA / "mssql_data" / "etalon_dbo_Country.csv", tmp_path).ok
+
+    sale = load_file(conn, model, rules, "sales.Sale", DATA / "mssql_data" / "sales_Sale.csv")
+    assert sale.rows == 3
+    got = conn.execute(f"SELECT saleid, saledate::text, amount FROM {PREFIX}_sales.sale ORDER BY 1").fetchall()
+    conn.rollback()
+    assert got == [(1, "2024-12-31", Decimal("10.00")), (2, "2025-06-01", Decimal("20.50")),
+                   (3, "2026-02-01", Decimal("5.00"))]
+
+
+def test_table_load_dedupes_within_file(conn, tmp_path):
+    model = import_oracle_dict(DATA / "oracle_dict")
+    model.schema_prefix = PREFIX
+    rules = TypeRules.load()
+    assert deploy(conn, generate(model, rules, server_dialect(conn)), recreate=True).ok
+    dup = tmp_path / "dup.csv"
+    dup.write_text("ORDER_ID,CUSTOMER_ID,ORDER_DATE,STATUS\n1,10,2026-01-15 10:30:00,NEW\n"
+                   "1,10,2026-01-15 10:30:00,PAID\n", encoding="utf-8")
+    load_file(conn, model, rules, "SALES.ORDERS", dup)
+    rows = conn.execute(f"SELECT order_id, status FROM {PREFIX}_sales.orders").fetchall()
+    conn.rollback()
+    assert rows == [(1, "PAID")]  # побеждает последняя строка файла
+
+
+def test_mssql_cp1251_file_and_fractional_seconds(conn, tmp_path):
+    model = import_mssql_dict(DATA / "mssql_dict")
+    model.schema_prefix = PREFIX
+    rules = TypeRules.load()
+    assert deploy(conn, generate(model, rules, server_dialect(conn)), recreate=True).ok
+    # Выгрузка из базы с collation Cyrillic_General_CI_AS часто приходит в Windows-1251
+    legacy = tmp_path / "dbo_Country.csv"
+    legacy.write_bytes("Code;Name;Capital\nRU;Россия;Москва\n".encode("cp1251"))
+    load_file(conn, model, rules, "dbo.Country", legacy)
+    assert conn.execute(f"SELECT capital FROM {PREFIX}_dbo.country").fetchone()[0] == "Москва"
+    conn.rollback()
+    # datetime2(7): 100 нс округляются до микросекунд
+    load_file(conn, model, rules, "dbo.Order", DATA / "mssql_data" / "dbo_Order.csv")
+    got = conn.execute(f"SELECT created::text FROM {PREFIX}_dbo.order WHERE orderid = 100").fetchone()[0]
+    conn.rollback()
+    assert got == "2026-05-01 09:00:00.123457"

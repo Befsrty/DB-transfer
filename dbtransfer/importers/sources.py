@@ -39,7 +39,8 @@ def export_help(source: str) -> str:
 
 def import_model(source: str, folder: Path | str | None = None, *, url: str | None = None,
                  password: str | None = None, schemas: Iterable[str] | None = None, system: str | None = None,
-                 encoding: str | None = None, delimiter: str | None = None, language: str = "R") -> Model:
+                 encoding: str | None = None, delimiter: str | None = None, language: str = "R",
+                 target: str = "table") -> Model:
     """Построить модель: из папки выгрузок или, для Oracle и MS SQL Server, по подключению url."""
     kind = source_kind(source)
     if kind == SourceKind.SAP_BW:
@@ -47,7 +48,7 @@ def import_model(source: str, folder: Path | str | None = None, *, url: str | No
             raise ImportFailed("Подключение напрямую к SAP BW не поддерживается: выгрузите таблицы через SE16")
         return import_bw_export(folder, language=language, encoding=encoding, delimiter=delimiter)
     importer = oracle_dict.import_oracle_dict if kind == SourceKind.ORACLE else mssql_dict.import_mssql_dict
-    extra = {"system": system.upper()} if system else {}
+    extra = {"system": system.upper(), "target": target} if system else {"target": target}
     if url:
         try:
             conn = CONNECTORS[source](url, password)

@@ -19,16 +19,36 @@ DELIMITERS = {";": "точка с запятой", "\t": "табуляция", "
 EXTENSIONS = (".csv", ".txt")
 
 
-@dataclass
 class Row:
-    line: int  # номер строки в файле, заголовок — строка 1
-    values: dict[str, str]
+    """Строка выгрузки. Значения хранятся кортежем, имена колонок — общим для файла словарём «колонка -> номер»:
+    на словаре из 10 000 таблиц (сотни тысяч строк колонок) это в несколько раз меньше памяти, чем dict на строку."""
+
+    __slots__ = ("line", "_index", "_cells")
+
+    def __init__(self, line: int, values: dict[str, str] | None = None, *,
+                 index: dict[str, int] | None = None, cells: tuple[str, ...] = ()):
+        self.line = line  # номер строки в файле, заголовок — строка 1
+        if values is not None:
+            index, cells = {h: i for i, h in enumerate(values)}, tuple(values.values())
+        self._index = index or {}
+        self._cells = cells
+
+    @property
+    def values(self) -> dict[str, str]:
+        return {h: self._cells[i] for h, i in self._index.items()}
 
     def __getitem__(self, column: str) -> str:
-        return self.values.get(column, "")
+        i = self._index.get(column)
+        return "" if i is None else self._cells[i]
 
     def get(self, column: str, default: str = "") -> str:
-        return self.values.get(column, default) or default
+        return self[column] or default
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Row) and (self.line, self.values) == (other.line, other.values)
+
+    def __repr__(self) -> str:
+        return f"Row(line={self.line}, values={self.values!r})"
 
 
 @dataclass
@@ -113,6 +133,7 @@ def read_table(folder: Path, spec: BwTable, encoding: str | None = None, delimit
     if extra:
         result.issue(Severity.INFO, f"Колонки не используются прототипом: {', '.join(extra)}", line=1)
 
+    index = {h: i for i, h in enumerate(header)}
     for values in reader:
         line = reader.line_num
         if not any(v.strip() for v in values):
@@ -123,6 +144,6 @@ def read_table(folder: Path, spec: BwTable, encoding: str | None = None, delimit
                          "Проверьте разделитель и кавычки в этой строке", line=line)
             continue
         # SE16 дополняет значения пробелами справа до длины поля; слева значения не трогаем
-        result.rows.append(Row(line=line, values={h: v.rstrip() for h, v in zip(header, values, strict=True)}))
+        result.rows.append(Row(line, index=index, cells=tuple(v.rstrip() for v in values)))
     result.usable = True
     return result

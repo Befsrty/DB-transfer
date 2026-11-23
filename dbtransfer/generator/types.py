@@ -13,7 +13,7 @@ from dbtransfer.model import FieldDef, InfoObject, InfoObjectKind, Model
 TYPE_RULES_FILE = "type_rules.yaml"
 STORAGE_KINDS = ("heap", "ao_column")
 NUMERIC_TYPES = {"CURR", "QUAN", "DEC", "NUMERIC", "INT1", "INT2", "INT4", "INT8", "FLTP"}
-TEXT_TYPES = {"CHAR", "CUKY", "UNIT", "LANG", "STRING", "SSTRING"}
+TEXT_TYPES = {"CHAR", "FIXCHAR", "CUKY", "UNIT", "LANG", "STRING", "SSTRING"}
 
 
 class RulesError(Exception):

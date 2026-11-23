@@ -19,6 +19,7 @@ import yaml
 
 from dbtransfer import naming
 from dbtransfer.analysis.excel import _table, _title
+from dbtransfer.generator.sql import ident
 from dbtransfer.generator.tables import TableBuilder
 from dbtransfer.generator.types import TypeRules, is_key_figure
 from dbtransfer.model import Adso, Model, ObjectType
@@ -43,6 +44,10 @@ class Spec:
     units: dict[str, str]  # показатель -> InfoObject единицы, если он есть в объекте
     columns: dict[str, str]  # InfoObject -> колонка в базе
     datatypes: dict[str, str]
+    table: str = ""  # таблица с данными: активные данные ADSO или таблица 1:1
+    ci_keys: list[str] = field(default_factory=list)  # ключи без учёта регистра (MS SQL *_CI_*)
+    # Таблица 1:1: числовых колонок бывают десятки, сверяются те, что есть в эталоне (ключ обязателен)
+    measures_from_etalon: bool = False
 
 
 @dataclass
@@ -69,9 +74,17 @@ class ReconcileResult:
 
 
 def make_spec(model: Model, object_name: str) -> Spec:
+    table = model.find_table(object_name) if object_name not in model.adsos else None
+    if table is not None:
+        keys = table.key or [f.name for f in table.fields if not is_key_figure(model, f)]
+        measures = [f.name for f in table.fields if is_key_figure(model, f) and f.name not in keys]
+        return Spec(table.key_name, keys, measures, {}, {f.name: ident(naming.db_name(f.name)) for f in table.fields},
+                    {f.name: f.datatype for f in table.fields}, naming.data_table(model, table),
+                    list(table.ci_columns), measures_from_etalon=True)
     adso = model.adsos.get(object_name)
     if adso is None:
-        raise ReconcileError(f"ADSO {object_name} не найден. Сверяются активные данные ADSO, например ZSD_A02")
+        raise ReconcileError(f"ADSO или таблица {object_name} не найдены. Сверяются активные данные ADSO "
+                             "(например, ZSD_A02) или таблица 1:1 (например, SALES.ORDERS)")
     builder = TableBuilder(model, TypeRules.load())
     keys = [f.name for f in builder.adso_keys(adso)] or [f.name for f in adso.fields if not is_key_figure(model, f)]
     # Числовое поле в ключе (код заказа в таблице Oracle) — часть ключа, а не показатель
@@ -84,16 +97,20 @@ def make_spec(model: Model, object_name: str) -> Spec:
             units[m] = iobj.unit_info_object
     return Spec(object_name, keys, measures, units,
                 {f.name: naming.column(f.name, f.info_object) for f in adso.fields},
-                {f.name: f.datatype for f in adso.fields})
+                {f.name: f.datatype for f in adso.fields}, naming.data_table(model, adso))
 
 
 def _text(value, datatype: str) -> str:
     """Значение признака в виде, как в эталоне: дата ГГГГММДД, пусто для NULL."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
+    if isinstance(value, datetime) and datatype in ("TIMESTAMP", "TIMESTAMPTZ"):
+        return value.isoformat(sep=" ")
     if isinstance(value, date | datetime):
         return value.strftime("%Y%m%d")
     text = str(value)
+    if datatype == "DATS" and len(text) == 10 and text[4] == "-" and text[7] == "-":
+        return text.replace("-", "")  # эталон из реляционной СУБД: 2026-01-31
     if datatype == "DATS" and text in ("00000000",):
         return ""
     return text
@@ -108,16 +125,28 @@ def _number(value) -> float | None:
     return float(value)
 
 
+def _delimiter(path: Path) -> str:
+    """Разделитель по заголовку: ; , табуляция или |. Автоопределение pandas ошибается на файле из одной колонки."""
+    with path.open(encoding="utf-8-sig", errors="replace") as f:
+        header = f.readline()
+    counts = {d: header.count(d) for d in (";", ",", "\t", "|")}
+    best = max(counts, key=counts.get)
+    return best if counts[best] else ","
+
+
 def read_etalon(path: Path, spec: Spec, columns: dict[str, str] | None = None) -> pd.DataFrame:
     """Эталон CSV -> DataFrame с колонками InfoObject (ключи — строки, показатели — числа)."""
     if not path.is_file():
         raise ReconcileError(f"Файл эталона {path} не найден")
-    df = pd.read_csv(path, sep=None, engine="python", dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    df = pd.read_csv(path, sep=_delimiter(path), dtype=str, keep_default_na=False, encoding="utf-8-sig")
     df = df.rename(columns={k: v for k, v in (columns or {}).items()})
+    if spec.measures_from_etalon:
+        spec.measures = [m for m in spec.measures if m in df.columns]
     missing = [c for c in spec.keys + spec.measures if c not in df.columns]
     if missing:
+        named = "как колонки таблицы источника" if spec.measures_from_etalon else "по InfoObject"
         raise ReconcileError(f"В эталоне {path.name} нет колонок {', '.join(missing)}. Колонки называются "
-                             f"по InfoObject; другое соответствие задаётся в {RECONCILE_FILE} проекта")
+                             f"{named}; другое соответствие задаётся в {RECONCILE_FILE} проекта")
     result = pd.DataFrame({k: [_text(v, spec.datatypes.get(k, "")) for v in df[k]] for k in spec.keys})
     for m in spec.measures:
         try:
@@ -130,7 +159,7 @@ def read_etalon(path: Path, spec: Spec, columns: dict[str, str] | None = None) -
 
 
 def read_actual(conn: psycopg.Connection, model: Model, spec: Spec) -> pd.DataFrame:
-    table = naming.data_table(model, model.adsos[spec.object_name])
+    table = spec.table
     names = list(dict.fromkeys(spec.keys + spec.measures + list(spec.units.values())))
     try:
         with conn.cursor() as cur:
@@ -153,6 +182,10 @@ def compare(etalon: pd.DataFrame, actual: pd.DataFrame, spec: Spec,
             tolerance: float = DEFAULT_TOLERANCE) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Сверка по ключу и каждому показателю с допуском (ФП-8.2). Возвращает построчный итог и суммы
     по показателям в разрезе единиц."""
+    for k in spec.ci_keys:
+        if k in spec.keys:
+            etalon[k] = etalon[k].str.lower()
+            actual[k] = actual[k].str.lower()
     for name, df in (("эталоне", etalon), ("базе", actual)):
         dup = df[df.duplicated(spec.keys, keep=False)]
         if len(dup):
@@ -210,7 +243,7 @@ def save_result(conn: psycopg.Connection, model: Model, result: ReconcileResult)
     for _, r in result.detail.iterrows():
         key = json.dumps({k: r[k] for k in spec.keys}, ensure_ascii=False)
         for m in spec.measures:
-            rows.append((result.object_name, result.etalon_file, key, m, _none(r[f"{m}_bw"]), _none(r[f"{m}_adb"]),
+            rows.append((result.object_name[:60], result.etalon_file, key, m, _none(r[f"{m}_bw"]), _none(r[f"{m}_adb"]),
                          _none(r[f"{m}_diff"]), r["status"]))
     with conn.cursor() as cur:
         run_id = cur.execute(f"SELECT nextval('{meta}.reconcile_run_seq')").fetchone()[0]
@@ -281,7 +314,7 @@ def reconcile(conn: psycopg.Connection, model: Model, object_name: str, etalon: 
     if check_lower and not result.ok:
         for lower in upstream_adsos(model, object_name):
             path = etalon.with_name(f"etalon_{lower}.csv")
-            if path.is_file() and isinstance(model.adsos.get(lower), Adso):
+            if path.is_file() and isinstance(model.adsos.get(lower), Adso):  # у таблиц 1:1 нижнего слоя нет
                 result.lower.append(reconcile(conn, model, lower, path, out_dir, project_dir, tolerance,
                                               check_lower=False, now=now))
     result.run_id = save_result(conn, model, result)

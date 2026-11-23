@@ -6,6 +6,9 @@ schemas:
   dwh: "{prefix}_dwh"     # активные данные и журналы изменений ADSO
   mart: "{prefix}_mart"   # ADSO верхнего уровня
   meta: "{prefix}_meta"   # служебные таблицы
+  # Таблицы Oracle и MS SQL Server при переносе 1:1: своя схема на каждую схему источника,
+  # {schema} — имя схемы источника в нижнем регистре (SALES.ORDERS -> dbt_sales.orders)
+  source: "{prefix}_{schema}"
 tables:
   datasource: "{name}"
   inbound: "{name}_inbound"
@@ -13,3 +16,4 @@ tables:
   change_log: "{name}_changelog"
   md_attr: "{name}_attr"
   md_text: "{name}_text"
+  db_table: "{name}"      # таблица источника при переносе 1:1, {name} — исходное имя в нижнем регистре

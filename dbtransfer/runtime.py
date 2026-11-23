@@ -26,7 +26,7 @@ from dbtransfer.generator.sql import literal, qualified
 from dbtransfer.generator.tables import Column, TableBuilder, TableDef
 from dbtransfer.generator.types import NUMERIC_TYPES
 from dbtransfer.importers.csv_reader import decode, detect_delimiter
-from dbtransfer.model import Adso, AdsoKind, DataSource, FieldDef, InfoObjectKind, Model, ObjectRef, ObjectType
+from dbtransfer.model import Adso, AdsoKind, DataSource, DbTable, FieldDef, InfoObjectKind, Model, ObjectRef, ObjectType
 
 MAX_ERRORS = 20
 # Дата и время в CSV-выгрузке реляционной СУБД: 2024-01-31, 2024-01-31 10:15:00.123, 2024-01-31T10:15:00+03:00
@@ -65,9 +65,17 @@ class RowError:
 
 @dataclass
 class LoadTarget:
-    kind: str  # datasource, md_attr, md_text
+    kind: str  # datasource, md_attr, md_text, table (перенос 1:1)
     object_name: str
     table: TableDef
+    # Колонки ключа для перезаписи; None — все NOT NULL колонки (справочники)
+    key: list[str] | None = None
+    ci_key: list[str] = field(default_factory=list)  # сравнивать через lower() (MS SQL *_CI_*)
+
+    def key_columns(self, columns: list[Column]) -> list[Column]:
+        if self.key is None:
+            return [c for c in columns if c.not_null]
+        return [c for c in columns if c.name in self.key]
 
     @property
     def with_load_id(self) -> bool:
@@ -115,6 +123,11 @@ def resolve_target(model: Model, rules: TypeRules, name: str, header: list[str])
     obj = model.find_datasource(name) or model.find(name)
     if isinstance(obj, DataSource):
         return LoadTarget("datasource", obj.name, builder.datasource_table(obj))
+    if isinstance(obj, DbTable):
+        table = builder.db_table(obj)
+        key = [naming.db_name(k) for k in obj.key]
+        # В журнале загрузок имя объекта до 60 символов (varchar(60), как у объектов BW)
+        return LoadTarget("table", obj.key_name[:60], table, key, [naming.db_name(k) for k in obj.ci_columns])
     iobj = model.info_objects.get(name)
     if iobj is not None and iobj.kind == InfoObjectKind.CHARACTERISTIC:
         tables = {t.role: t for t in builder.md_tables(iobj)}
@@ -127,8 +140,8 @@ def resolve_target(model: Model, rules: TypeRules, name: str, header: list[str])
     if isinstance(obj, Adso):
         raise LoadError(f"{name} — ADSO, а файлы загружаются в DataSource или справочник. "
                         "Загрузите файл в DataSource и выполните прогон: dbtransfer run <load_id>")
-    raise LoadError(f"Объект {name} не найден. Файл грузится в DataSource (например, ZSALES_FF) "
-                    "или в справочник признака (например, 0MATERIAL)")
+    raise LoadError(f"Объект {name} не найден. Файл грузится в DataSource (например, ZSALES_FF), "
+                    "в справочник признака (например, 0MATERIAL) или в таблицу 1:1 (например, SALES.ORDERS)")
 
 
 def map_columns(target: LoadTarget, header: list[str]) -> list[Column]:
@@ -147,8 +160,8 @@ def map_columns(target: LoadTarget, header: list[str]) -> list[Column]:
         raise LoadError(f"Колонок {', '.join(unknown)} нет в таблице {target.table.qname}. Колонки файла "
                         "называются как поля DataSource или InfoObject (в первой строке файла)")
     names = {c.name for c in result}
-    missing = [c.name for c in target.table.columns
-               if c.not_null and c.name not in names and c.name not in ("load_id", "record_no")]
+    required = target.key if target.key is not None else [c.name for c in target.table.columns if c.not_null]
+    missing = [n for n in required if n not in names and n not in ("load_id", "record_no")]
     if missing and not target.with_load_id:
         raise LoadError(f"В файле нет ключевых колонок: {', '.join(missing)}")
     return result
@@ -179,7 +192,8 @@ def check_sql(col: Column, src: str) -> list[tuple[str, str]]:
                            f"'g'), '0')) > {whole}", f"больше {whole} знаков до запятой"))
         return checks
     if f.datatype in ("INT1", "INT2", "INT4", "INT8"):
-        return [(f"{t} <> '' AND {t} !~ '^[-+]?[0-9]+$'", "не целое число")]
+        # 12300.0 — так целые NUMBER(p,-s) и FLOAT выгружают драйверы и часть инструментов
+        return [(f"{t} <> '' AND {t} !~ '^[-+]?[0-9]+([.]0*)?$'", "не целое число")]
     if f.datatype == "DATS":
         ymd = (f"({t} ~ '^[0-9]{{8}}$' AND substr({t}, 5, 2) BETWEEN '01' AND '12' "
                f"AND substr({t}, 7, 2) BETWEEN '01' AND '31')")
@@ -213,7 +227,7 @@ def convert_sql(col: Column, src: str, rules: TypeRules) -> str:
     if f.datatype in NUMERIC_TYPES - {"INT1", "INT2", "INT4", "INT8"}:
         expr = f"nullif(replace(replace({t}, ' ', ''), ',', '.'), '')::{col.type}"
     elif f.datatype in ("INT1", "INT2", "INT4", "INT8"):
-        expr = f"nullif({t}, '')::{col.type}"
+        expr = f"nullif(regexp_replace({t}, '[.]0*$', ''), '')::{col.type}"
     elif f.datatype == "DATS":
         empty = rules.initial_value(f) if key else "NULL"
         return (f"CASE WHEN {t} IN ('', '00000000') THEN {empty} "
@@ -299,11 +313,24 @@ def load_file(conn: psycopg.Connection, model: Model, rules: TypeRules, object_n
             if target.with_load_id:
                 names = ["load_id", "record_no", *names]
                 exprs = [str(load_id), "row_number() OVER (ORDER BY r.dbt_line_no)", *exprs]
-            else:
-                keys = [c for c in columns if c.not_null]
-                join = " AND ".join(f"t.{c.sql_name} = {convert_sql(c, f'r.{c.sql_name}', rules)}" for c in keys)
-                cur.execute(f"DELETE FROM {table.qname} t USING {raw} r WHERE {join}")
-            cur.execute(f"INSERT INTO {table.qname} ({', '.join(names)}) SELECT {', '.join(exprs)} FROM {raw} r")
+            source = f"{raw} r"
+            if not target.with_load_id:
+                keys = target.key_columns(columns)
+
+                def same(c: Column, left: str, right: str) -> str:
+                    return f"lower({left}) = lower({right})" if c.name in target.ci_key else f"{left} = {right}"
+
+                if keys:
+                    join = " AND ".join(same(c, f"t.{c.sql_name}", convert_sql(c, f"r.{c.sql_name}", rules))
+                                        for c in keys)
+                    cur.execute(f"DELETE FROM {table.qname} t USING {raw} r WHERE {join}")
+                    if target.kind == "table":
+                        # Повтор ключа в одном файле: остаётся последняя строка, как при перезаписи по загрузкам
+                        part = ", ".join(f"lower({convert_sql(c, f'x.{c.sql_name}', rules)})" if c.name in target.ci_key
+                                         else convert_sql(c, f"x.{c.sql_name}", rules) for c in keys)
+                        source = (f"(SELECT * FROM (SELECT x.*, row_number() OVER (PARTITION BY {part} "
+                                  f"ORDER BY x.dbt_line_no DESC) AS dbt_rn FROM {raw} x) y WHERE y.dbt_rn = 1) r")
+            cur.execute(f"INSERT INTO {table.qname} ({', '.join(names)}) SELECT {', '.join(exprs)} FROM {source}")
             count = cur.rowcount
             status = LOADED if target.with_load_id else ACTIVATED
             cur.execute(
@@ -311,7 +338,8 @@ def load_file(conn: psycopg.Connection, model: Model, rules: TypeRules, object_n
                 "loaded_by, loaded_at, activated_at, message) VALUES (%s, %s, %s, %s, %s, %s, %s, now(), "
                 f"{'NULL' if target.with_load_id else 'now()'}, %s)",
                 (load_id, target.object_name, path.name, file_hash, count, status, user,
-                 None if target.with_load_id else f"справочник: {table.qname}"))
+                 None if target.with_load_id else
+                 f"{'таблица' if target.kind == 'table' else 'справочник'}: {table.qname}"))
         conn.commit()
     except psycopg.Error as e:
         conn.rollback()

@@ -125,6 +125,9 @@ def import_cmd(
              "mssql://user@host:1433/база. Пароль — из переменной DBT_SRC_PASSWORD.")] = None,
     schemas: Annotated[str | None, typer.Option(
         help="Oracle и MS SQL Server: схемы через запятую. По умолчанию все, кроме служебных.")] = None,
+    target: Annotated[str, typer.Option(
+        help="Oracle и MS SQL Server: table — таблица 1:1 с исходным именем (по умолчанию), "
+             "adso — поток как в BW: входная таблица, ADSO, трансформация, активация.")] = "table",
     system: Annotated[str | None, typer.Option(
         help="Oracle и MS SQL Server: имя исходной системы у входных таблиц (по умолчанию ORACLE или имя базы).")
     ] = None,
@@ -135,6 +138,7 @@ def import_cmd(
     try:
         model = import_model(source, None if url else where, url=url, password=os.environ.get("DBT_SRC_PASSWORD"),
                              schemas=schemas.split(",") if schemas else None, system=system, language=language,
+                             target=target,
                              encoding=encoding, delimiter="\t" if delimiter == "tab" else delimiter)
     except ImportFailed as e:
         raise _fail(str(e)) from None
@@ -147,8 +151,10 @@ def import_cmd(
                    f"DataSource: {len(model.datasources)}, трансформации: {len(model.transformations)}, "
                    f"DTP: {len(model.dtps)}, прочие объекты: {len(model.others)}")
     else:
-        keyless = sum(1 for a in model.adsos.values() if not a.key)
-        typer.echo(f"  {model.source_label}: таблиц {len(model.adsos)} (без ключа {keyless}), "
+        keyless = sum(1 for a in [*model.adsos.values(), *model.tables.values()] if not a.key)
+        parted = sum(1 for t in model.tables.values() if t.partitioning)
+        typer.echo(f"  {model.source_label}: таблиц {len(model.adsos) + len(model.tables)} (без ключа {keyless}"
+                   + (f", секционированных {parted}" if parted else "") + "), "
                    f"прочих объектов (представления, код) {len(model.others)}")
     if model.inactive:
         typer.echo(f"  Пропущены неактивные: {', '.join(o.name for o in model.inactive)}")

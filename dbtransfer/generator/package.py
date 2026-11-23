@@ -22,12 +22,15 @@ from dbtransfer.model import Adso, AdsoKind, InfoObjectKind, Model, RuleKind
 
 DIALECTS = ("greenplum", "postgres")
 LAYERS = ("stg", "md", "dwh", "mart", "meta")
-# Группа -> файл и заголовок, в порядке развёртывания (ФП-6.1)
+# Группа -> файл и заголовок, в порядке развёртывания (ФП-6.1). Файлы необязательных групп без объектов
+# не пишутся: у моделей BW нет таблиц 1:1, и их пакет остаётся прежним
+OPTIONAL_GROUPS = {"tables"}
 GROUPS = {
     "schemas": ("010_schemas.sql", "Схемы слоёв"),
     "meta": ("020_meta.sql", "Служебные таблицы"),
     "md": ("030_md.sql", "Справочники: атрибуты и тексты признаков"),
     "datasources": ("040_datasources.sql", "Входные таблицы DataSource"),
+    "tables": ("045_tables.sql", "Таблицы источника, перенос 1:1"),
     "adso": ("050_adso.sql", "Таблицы ADSO"),
     "activation": ("060_activation.sql", "Функции активации ADSO"),
     "transformations": ("070_transformations.sql", "Трансформации"),
@@ -62,8 +65,9 @@ class Package:
 
     @property
     def data_schemas(self) -> list[str]:
-        """Схемы с данными: всё, кроме служебной."""
-        return [naming.schema(layer, self.schema_prefix) for layer in LAYERS if layer != "meta"]
+        """Схемы с данными: всё, кроме служебной (слои и схемы таблиц 1:1)."""
+        meta = ident(self.meta_schema)
+        return [o.name for o in self.objects if o.kind == "schema" and o.name != meta]
 
     @property
     def sql_hash(self) -> str:
@@ -104,6 +108,8 @@ class Package:
         result: dict[str, str] = {}
         for group, (file_name, title) in GROUPS.items():
             parts = [o.sql for o in self.objects if o.group == group]
+            if not parts and group in OPTIONAL_GROUPS:
+                continue
             body = "\n".join(parts) if parts else "-- Объектов нет\n"
             result[file_name] = self.header(title) + "\n" + body
         deploy = [self.header("Весь пакет одним файлом: psql -f deploy_all.sql"), "\\set ON_ERROR_STOP on\n"]
@@ -143,7 +149,7 @@ class Generator:
         self.rules = rules
         self.dialect = dialect
         self.env = _environment()
-        self.tables = TableBuilder(model, rules)
+        self.tables = TableBuilder(model, rules, dialect)
         self.transforms = TransformBuilder(model, self.tables)
         self.package = Package(model.name, model.content_hash(), dialect, model.schema_prefix)
         self._select_scope(scope)
@@ -154,6 +160,7 @@ class Generator:
             self.adsos = sorted(m.adsos.values(), key=lambda a: a.name)
             self.datasources = sorted(m.datasources.values(), key=lambda d: d.ref.key)
             self.trs = sorted(m.transformations.values(), key=lambda t: (t.source.key, t.target.key, t.id))
+            self.db_tables = sorted(m.tables.values(), key=lambda t: t.key_name)
             used = set(m.info_objects)
         else:
             s = scope_from(m, scope)
@@ -163,6 +170,7 @@ class Generator:
                                       key=lambda d: d.ref.key)
             self.trs = sorted((m.transformations[t] for t in s.transformations),
                               key=lambda t: (t.source.key, t.target.key, t.id))
+            self.db_tables = sorted((t for t in m.tables.values() if t.key_name in keys), key=lambda t: t.key_name)
             used = set(s.info_objects) | {f.info_object for a in self.adsos for f in a.fields if f.info_object}
         # Справочники: признаки потока и признаки, чьи атрибуты читаются в трансформациях
         used |= {r.param.split("-")[0] for t in self.trs for r in t.rules
@@ -187,18 +195,24 @@ class Generator:
         for layer in LAYERS:
             name = ident(naming.schema(layer, prefix))
             self.add("schemas", "schema", name, f"CREATE SCHEMA IF NOT EXISTS {name};\n")
+        for schema in sorted({naming.db_table_schema(self.model, t) for t in self.db_tables}):
+            name = ident(schema)
+            self.add("schemas", "schema", name, f"CREATE SCHEMA IF NOT EXISTS {name};\n")
         self._meta()
         for iobj in self.characteristics:
             for t in self.tables.md_tables(iobj):
                 self.add_table("md", t)
         for ds in self.datasources:
             self.add_table("datasources", self.tables.datasource_table(ds))
+        for t in self.db_tables:
+            self.add_table("tables", self.tables.db_table(t))
         for adso in self.adsos:
             for role in self.tables.adso_roles(adso):
                 self.add_table("adso", self.tables.adso_table(adso, role))
         for adso in self.adsos:
             self._activation(adso)
         self._transformations()
+        self.package.warnings.extend(self.tables.warnings)
         for datatype, fields in sorted(self.rules.unknown.items()):
             self.package.warnings.append(f"Тип {datatype} нет в type_rules.yaml, взят {self.rules.default_type}: "
                                          + ", ".join(sorted(set(fields))))
