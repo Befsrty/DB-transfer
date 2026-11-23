@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from dbtransfer import naming
+from dbtransfer.generator.dialects import DIALECT_SPECS, Dialect
 from dbtransfer.generator.partitions import partition_sql
 from dbtransfer.generator.sql import ident, qualified
 from dbtransfer.generator.types import RulesError, TypeRules, is_key_figure
@@ -83,18 +84,19 @@ def iobj_field(iobj: InfoObject) -> FieldDef:
 
 
 class TableBuilder:
-    def __init__(self, model: Model, rules: TypeRules, dialect: str = "greenplum"):
+    def __init__(self, model: Model, rules: TypeRules, dialect: Dialect | None = None):
         self.model = model
         self.rules = rules
-        self.dialect = dialect
+        self.dialect = dialect or DIALECT_SPECS["greenplum"]
         self.warnings: list[str] = []
 
     def _apply_storage(self, table: TableDef, role: str, obj: str) -> None:
         table.storage = self.rules.storage_for(role, obj)
         table.storage_options = self.rules.storage_options.get(table.storage, "")
-        if table.storage != "heap" and table.primary_key:
+        if table.storage != "heap" and table.primary_key and self.dialect.mpp and not self.dialect.ao_primary_key:
             raise RulesError(f"type_rules.yaml: у {obj} таблица «{ROLE_TEXT.get(role, role)}» append-optimized, "
-                             "а у таких таблиц в Greenplum не может быть PRIMARY KEY. Оставьте для неё heap")
+                             "а у таких таблиц в Greenplum 6 не может быть PRIMARY KEY (в 7 может). "
+                             "Оставьте для неё heap или генерируйте для greenplum7")
 
     def _apply_distribution(self, table: TableDef, obj: str, default: list[str]) -> None:
         wanted = self.rules.distributed_by(obj)
@@ -243,7 +245,7 @@ class TableBuilder:
         table.storage_options = self.rules.storage_options.get(table.storage, "")
         self._apply_distribution(table, obj, key_cols[:1])
         if t.partitioning is not None and part_cols:
-            ps = partition_sql(t.partitioning, table.schema, table.name, part_cols, self.dialect == "greenplum")
+            ps = partition_sql(t.partitioning, table.schema, table.name, part_cols, self.dialect.mpp)
             table.partition_sql, table.after_sql = ps.clause, ps.after
             self.warnings.extend(ps.warnings)
             if t.partitioning.note:

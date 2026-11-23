@@ -6,9 +6,9 @@ CREATE TABLE IF NOT EXISTS {{ t.qname }} (
 {% if t.primary_key %}
     PRIMARY KEY ({{ t.primary_key | join(", ") }})
 {% endif %}
-){% if greenplum %}{% if t.storage_options %}
+){% if mpp %}{% if storage %}
 
-WITH ({{ t.storage_options }}){% endif %}
+{{ storage }}{% endif %}
 
 {% if t.distributed_by %}DISTRIBUTED BY ({{ t.distributed_by | join(", ") }}){% else %}DISTRIBUTED RANDOMLY{% endif %}{% if t.partition_sql %}
 

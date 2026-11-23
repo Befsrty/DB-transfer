@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import psycopg
 
 from dbtransfer.config import DbSettings
+from dbtransfer.generator.dialects import dialect_for_server
 
 
 class DbError(Exception):
@@ -41,7 +42,7 @@ def check_connection(settings: DbSettings) -> ConnectionInfo:
 
 
 def server_dialect(conn: psycopg.Connection) -> str:
-    """Диалект генератора для сервера: greenplum для Greengage и Greenplum, иначе postgres."""
+    """Диалект генератора для сервера: greenplum7 для ADB 7 / Greengage 7, greenplum для 6.x, иначе postgres."""
     version = conn.execute("SELECT version()").fetchone()[0]
     conn.rollback()
-    return "greenplum" if ("Greenplum" in version or "Greengage" in version) else "postgres"
+    return dialect_for_server(version, conn.info.server_version)

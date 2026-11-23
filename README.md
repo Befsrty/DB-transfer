@@ -1,6 +1,6 @@
 # DB-transfer
 
-DB-transfer переносит структуру хранилища данных SAP BW в Greenplum-совместимую СУБД (Arenadata DB, Greengage, Greenplum 6) и проверяет, что после переноса отчёты получают те же цифры.
+DB-transfer переносит структуру хранилища данных SAP BW в Greenplum-совместимую СУБД (основная цель — Arenadata DB 7.5 / Greengage 7; ADB 6.x, Greengage 6, Greenplum 6 и Yandex MPP — режим совместимости) и проверяет, что после переноса отчёты получают те же цифры.
 
 На вход подаются CSV-выгрузки таблиц метаданных BW, сделанные транзакцией SE16, или словарь Oracle / MS SQL Server (CSV-выгрузка запросов к `ALL_*` и `INFORMATION_SCHEMA` либо прямое подключение, см. [docs/rdbms-import.md](docs/rdbms-import.md)). По ним приложение:
 
@@ -130,7 +130,7 @@ uv run dbtransfer init C:\work\my-bw              # новый проект дл
 uv run dbtransfer ui                              # веб-интерфейс на http://localhost:8501
 ```
 
-Команды, которые обращаются к базе, берут подключение из `.env` (другой файл — `--env-file`). Диалект SQL выбирается по серверу: Greengage/Greenplum или обычный PostgreSQL.
+Команды, которые обращаются к базе, берут подключение из `.env` (другой файл — `--env-file`). Диалект SQL выбирается по серверу: `greenplum7` для ADB 7 / Greengage 7, `greenplum` для 6.x, `postgres` для обычного PostgreSQL. Команда `generate` без подключения по умолчанию пишет пакет для `greenplum7`; для ADB 6.x и Yandex MPP — `generate --dialect greenplum`. Различия версий — в [docs/greengage7.md](docs/greengage7.md).
 
 ### Lineage
 
@@ -236,7 +236,7 @@ uv run pytest -m db    # интеграционные тесты с запуще
 
 Тесты генерации сравнивают SQL с эталонными файлами в `tests/golden/sql/`. Если SQL изменился намеренно, эталоны обновляются командой `UPDATE_GOLDEN=1 uv run pytest tests/unit/test_generator.py` (в PowerShell: `$env:UPDATE_GOLDEN=1; uv run pytest tests/unit/test_generator.py; Remove-Item Env:UPDATE_GOLDEN`), после чего разницу нужно просмотреть в `git diff`.
 
-CI в GitHub Actions на каждый pull request запускает модульные тесты, ruff, проверку покрытия и интеграционные тесты на Greengage 6.32.
+CI в GitHub Actions на каждый pull request запускает модульные тесты, ruff, проверку покрытия и интеграционные тесты на Greengage 7.5.1 и 6.32.0 (матрица).
 
 ## Подключение из DBeaver
 

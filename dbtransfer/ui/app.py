@@ -24,7 +24,7 @@ from dbtransfer.analysis.lineage import DOWN, UP, LineageError, lineage, render
 from dbtransfer.config import load_db_settings, source_tables
 from dbtransfer.db import DbError, check_connection, connect, server_dialect
 from dbtransfer.deploy import ACTION_TEXT, DeployError, deploy, make_plan
-from dbtransfer.generator import DIALECTS, GROUPS, RulesError, TypeRules, generate
+from dbtransfer.generator import DEFAULT_DIALECT, DIALECT_SPECS, DIALECTS, GROUPS, RulesError, TypeRules, generate
 from dbtransfer.importers.bw_csv import ImportFailed
 from dbtransfer.importers.sources import SOURCES, export_help, import_model, source_kind
 from dbtransfer.model import Adso, DataSource, DbTable, Model, Severity
@@ -382,8 +382,8 @@ def tab_sql(project: Project, model: Model) -> None:
     if rules is None:
         return
     c1, c2 = st.columns(2)
-    dialect = c1.selectbox("Диалект", DIALECTS, format_func={"greenplum": "Greengage / Greenplum",
-                                                             "postgres": "PostgreSQL"}.get)
+    dialect = c1.selectbox("Диалект", DIALECTS, index=DIALECTS.index(DEFAULT_DIALECT),
+                           format_func=lambda d: DIALECT_SPECS[d].title)
     only_scope = c2.checkbox("Только состав переноса", value=False, disabled=not project.config.scope_from)
     try:
         package = generate(model, rules, dialect, project.config.scope_from if only_scope else None)

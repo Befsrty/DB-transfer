@@ -18,13 +18,24 @@ jobs:
       - name: Модульные тесты
         run: uv run pytest --cov=dbtransfer --cov-report=term-missing --cov-fail-under=70
 
-  # Интеграционные тесты с Greengage (ТЗ 4.7, «Ж»): развёртывание пакета SQL и прогон примера приложения Д
+  # Интеграционные тесты с Greengage (ТЗ 4.7, «Ж»): развёртывание пакета SQL и прогон примера приложения Д.
+  # 7.5.1 — основная цель (ADB 7.5 / Greengage 7, диалект greenplum7), 6.32.0 — совместимость с ADB 6.x
+  # и Yandex MPP (диалект greenplum). Публичного образа ADB нет: Greengage — его открытое ядро (допущение).
   greengage:
+    name: greengage ${{ matrix.version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "7.5.1"
+            dialect: greenplum7
+          - version: "6.32.0"
+            dialect: greenplum
     services:
       greengage:
-        image: woblerr/greengage:6.32.0
+        image: woblerr/greengage:${{ matrix.version }}
         options: --hostname greengage
         env:
           GREENPLUM_PASSWORD: student
@@ -37,6 +48,7 @@ jobs:
       DBT_DB_NAME: demo
       DBT_DB_USER: gpadmin
       DBT_DB_PASSWORD: student
+      DBT_EXPECT_DIALECT: ${{ matrix.dialect }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -51,5 +63,7 @@ jobs:
             sleep 5
           done
           echo "Greengage не поднялся за 5 минут"; exit 1
+      - name: Версия сервера
+        run: PGPASSWORD=student psql -h localhost -U gpadmin -d demo -tAc "select version()"
       - name: Интеграционные тесты
         run: uv run pytest -m db -v
