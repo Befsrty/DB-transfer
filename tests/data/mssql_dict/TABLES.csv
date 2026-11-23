@@ -1,0 +1,8 @@
+TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE
+Shop,dbo,Customer,BASE TABLE
+Shop,dbo,Order,BASE TABLE
+Shop,dbo,AuditLog,BASE TABLE
+Shop,dbo,vOrderTotals,VIEW
+Shop,dbo,Country,BASE TABLE
+Shop,sales,Sale,BASE TABLE
+Shop,sys,trace_xe_action_map,BASE TABLE

@@ -1,0 +1,5 @@
+OWNER,VIEW_NAME,TEXT
+SALES,V_SALES_BY_REGION,"SELECT c.region, SUM(o.amount) AS amount
+  FROM orders o
+  JOIN sales.customers c ON c.customer_id = o.customer_id
+ GROUP BY c.region"

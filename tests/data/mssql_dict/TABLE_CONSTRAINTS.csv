@@ -1,0 +1,6 @@
+CONSTRAINT_SCHEMA,CONSTRAINT_NAME,TABLE_SCHEMA,TABLE_NAME,CONSTRAINT_TYPE
+dbo,PK_Customer,dbo,Customer,PRIMARY KEY
+dbo,PK_Order,dbo,Order,PRIMARY KEY
+dbo,FK_Order_Customer,dbo,Order,FOREIGN KEY
+dbo,PK_Country,dbo,Country,PRIMARY KEY
+sales,PK_Sale,sales,Sale,PRIMARY KEY

@@ -6,9 +6,10 @@ from dataclasses import dataclass, field
 
 from dbtransfer import naming
 from dbtransfer.generator.dialects import DIALECT_SPECS, Dialect
+from dbtransfer.generator.partitions import partition_sql
 from dbtransfer.generator.sql import ident, qualified
 from dbtransfer.generator.types import RulesError, TypeRules, is_key_figure
-from dbtransfer.model import Adso, AdsoKind, DataSource, FieldDef, InfoObject, Model
+from dbtransfer.model import Adso, AdsoKind, DataSource, DbTable, FieldDef, InfoObject, Model
 
 ROLE_TEXT = {"inbound": "входящая таблица", "active": "активные данные", "change_log": "журнал изменений"}
 KIND_TEXT = {AdsoKind.STAGING: "staging", AdsoKind.STANDARD: "standard", AdsoKind.CUMULATIVE: "cumulative",
@@ -49,6 +50,8 @@ class TableDef:
     distributed_by: list[str] = field(default_factory=list)  # пусто — DISTRIBUTED RANDOMLY
     bw_object: str = ""
     role: str = ""
+    partition_sql: str = ""  # PARTITION BY ... после DISTRIBUTED BY (Greenplum) или после колонок (PostgreSQL)
+    after_sql: str = ""  # операторы после CREATE TABLE: секции PostgreSQL (PARTITION OF)
 
     @property
     def qname(self) -> str:
@@ -67,7 +70,10 @@ def type_text(f: FieldDef) -> str:
     return f"{f.datatype} {size}" if f.length else f.datatype
 
 
-def field_comment(obj: str, f: FieldDef, iobj: InfoObject | None) -> str:
+def field_comment(obj: str, f: FieldDef, iobj: InfoObject | None, model: Model | None = None) -> str:
+    if model is not None and not model.is_bw:
+        # Реляционный источник: в комментарии поля уже тип источника и описание колонки
+        return f"{model.source_label}: {obj}.{f.name}" + (f" {f.comment}" if f.comment else "")
     text = f.comment or (iobj.description or iobj.short_text if iobj else "")
     return f"BW: {obj}.{f.name} ({type_text(f)})" + (f". {text}" if text else "")
 
@@ -82,6 +88,7 @@ class TableBuilder:
         self.model = model
         self.rules = rules
         self.dialect = dialect or DIALECT_SPECS["greenplum"]
+        self.warnings: list[str] = []
 
     def _apply_storage(self, table: TableDef, role: str, obj: str) -> None:
         table.storage = self.rules.storage_for(role, obj)
@@ -114,7 +121,7 @@ class TableBuilder:
             iobj = self.model.info_objects.get(f.info_object or f.name)
             name = naming.column(f.name, f.info_object if adso else None)
             result.append(Column(name=name, type=self.rules.column_type(f, obj), not_null=f.name in keys,
-                                 comment=field_comment(obj, f, iobj), field=f))
+                                 comment=field_comment(obj, f, iobj, self.model), field=f))
         return result
 
     # --- справочники ---
@@ -157,9 +164,13 @@ class TableBuilder:
         columns = [Column(n, tp, True, c) for n, tp, c in (LOAD_ID, RECORD_NO)]
         columns += self.field_columns(ds.name, ds.fields, adso=False, keys=set())
         kind = "плоский файл" if ds.is_flat_file else (ds.source_type or "источник")
+        comment = (f"BW: DataSource {ds.name} ({kind}, система {ds.source_system}), входная таблица. "
+                   f"{ds.description}".strip())
+        if not self.model.is_bw:
+            comment = f"{self.model.source_label}: {ds.description}, входная таблица для CSV с данными (система " \
+                      f"{ds.source_system})"
         t = TableDef(naming.schema("stg", self.model.schema_prefix), naming.table("datasource", ds.name), columns,
-                     f"BW: DataSource {ds.name} ({kind}, система {ds.source_system}), входная таблица. "
-                     f"{ds.description}".strip(),
+                     comment,
                      bw_object=f"DataSource {ds.ref.key}", role="datasource")
         self._apply_storage(t, "datasource", ds.name)
         self._apply_distribution(t, ds.name, [])
@@ -191,8 +202,52 @@ class TableBuilder:
         comment = (f"BW: ADSO {adso.name} ({KIND_TEXT[adso.kind]}), {ROLE_TEXT[role]}"
                    + (f", таблица BW {bw_table}" if bw_table else "") + "." + (f" {adso.description}"
                                                                               if adso.description else ""))
+        if not self.model.is_bw:
+            source_table = f"{adso.info_area}.{adso.name.removeprefix(adso.info_area + '_')}"
+            comment = f"{self.model.source_label}: таблица {source_table}, {ROLE_TEXT[role]}." + (
+                f" {adso.description}" if adso.description and adso.description != source_table else "")
         t = TableDef(naming.table_schema(self.model, adso, role), naming.table(role, adso.name), columns, comment,
                      primary_key=key_cols if role == "active" else [], bw_object=f"ADSO {adso.name}", role=role)
         self._apply_storage(t, role, adso.name)
         self._apply_distribution(t, adso.name, key_cols[:1])
         return t
+
+    # --- таблица 1:1 (Oracle, MS SQL Server) ---
+    def db_table(self, t: DbTable) -> TableDef:
+        obj = t.key_name
+        columns = []
+        for f in sorted(t.fields, key=lambda x: x.position):
+            columns.append(Column(name=naming.db_name(f.name), type=self.rules.column_type(f, obj),
+                                  not_null=f.is_key or not f.nullable,
+                                  comment=f"{self.model.source_label}: {obj}.{f.name}"
+                                          + (f" {f.comment}" if f.comment else ""), field=f))
+        key_cols = [ident(naming.db_name(f.name)) for f in sorted(t.fields, key=lambda x: x.position) if f.is_key]
+        part_cols: list[str] = []
+        if t.partitioning is not None:
+            part_cols = [ident(naming.db_name(c)) for c in t.partitioning.columns]
+            if key_cols and not set(part_cols) <= set(key_cols):
+                self.warnings.append(f"{obj}: первичный ключ ({', '.join(key_cols)}) не включает колонки "
+                                     f"секционирования ({', '.join(part_cols)}), а Greenplum этого требует. "
+                                     "Таблица секционирована, PRIMARY KEY не объявлен; перезапись по ключу "
+                                     "при загрузке работает и без него")
+                key_cols_pk: list[str] = []
+            else:
+                key_cols_pk = key_cols
+        else:
+            key_cols_pk = key_cols
+        role = "table" if key_cols_pk else "table_nokey"
+        comment = f"{self.model.source_label}: таблица {obj}" + (f". {t.description}" if t.description else "")
+        table = TableDef(naming.db_table_schema(self.model, t), naming.db_table_name(t), columns, comment,
+                         primary_key=key_cols_pk, bw_object=f"Таблица {obj}", role=role)
+        table.storage = self.rules.storage_for(role, obj)
+        if table.storage != "heap" and table.primary_key:
+            table.storage = "heap"
+        table.storage_options = self.rules.storage_options.get(table.storage, "")
+        self._apply_distribution(table, obj, key_cols[:1])
+        if t.partitioning is not None and part_cols:
+            ps = partition_sql(t.partitioning, table.schema, table.name, part_cols, self.dialect.mpp)
+            table.partition_sql, table.after_sql = ps.clause, ps.after
+            self.warnings.extend(ps.warnings)
+            if t.partitioning.note:
+                self.warnings.append(f"{obj}: {t.partitioning.note}")
+        return table

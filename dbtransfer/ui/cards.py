@@ -11,7 +11,7 @@ from dbtransfer.analysis.assessment import Report, transformation_label
 from dbtransfer.analysis.lineage import DOWN, RULE_LABELS, Node
 from dbtransfer.generator.tables import ROLE_TEXT, TableBuilder, type_text
 from dbtransfer.generator.types import TypeRules, is_key_figure
-from dbtransfer.model import Adso, DataSource, Model, Transformation
+from dbtransfer.model import Adso, DataSource, DbTable, Model, Transformation
 
 STORAGE_TEXT = {"heap": "heap", "ao_column": "AO колоночная, zstd"}
 
@@ -21,8 +21,15 @@ def assessment_of(report: Report, name: str) -> tuple[int, str, float] | None:
     return (a.level, a.reason, a.hours) if a else None
 
 
-def object_fields(model: Model, rules: TypeRules, obj: Adso | DataSource) -> pd.DataFrame:
+def object_fields(model: Model, rules: TypeRules, obj: Adso | DataSource | DbTable) -> pd.DataFrame:
     """Поля объекта: InfoObject, тип BW и ADB, ключ, показатель, колонка в базе."""
+    if isinstance(obj, DbTable):
+        return pd.DataFrame([{
+            "Поле": f.name, "Описание": f.comment, "Тип модели": type_text(f),
+            "Тип ADB": rules.column_type(f, obj.key_name), "Ключ": "да" if f.is_key else "",
+            "Показатель": "да" if is_key_figure(model, f) and not f.is_key else "",
+            "Колонка ADB": naming.db_name(f.name),
+        } for f in sorted(obj.fields, key=lambda x: x.position)])
     builder = TableBuilder(model, rules)
     adso = isinstance(obj, Adso)
     keys = {f.name for f in builder.adso_keys(obj)} if adso else set()
@@ -41,17 +48,19 @@ def object_fields(model: Model, rules: TypeRules, obj: Adso | DataSource) -> pd.
     return pd.DataFrame(rows)
 
 
-def object_tables(model: Model, rules: TypeRules, obj: Adso | DataSource) -> pd.DataFrame:
+def object_tables(model: Model, rules: TypeRules, obj: Adso | DataSource | DbTable) -> pd.DataFrame:
     """Таблицы объекта в ADB: роль, таблица BW, таблица ADB, хранение, ключ распределения, PK."""
     builder = TableBuilder(model, rules)
-    if isinstance(obj, DataSource):
+    if isinstance(obj, DbTable):
+        tables = [("table", obj.key_name, builder.db_table(obj))]
+    elif isinstance(obj, DataSource):
         tables = [("datasource", None, builder.datasource_table(obj))]
     else:
         tables = [(role, obj.bw_tables.get(role), builder.adso_table(obj, role)) for role in builder.adso_roles(obj)]
     rows = []
     for role, bw, t in tables:
         rows.append({
-            "Роль": ROLE_TEXT.get(role, "входная таблица"),
+            "Роль": "таблица 1:1" if role == "table" else ROLE_TEXT.get(role, "входная таблица"),
             "Таблица BW": bw or "",
             "Таблица ADB": t.qname,
             "Хранение": STORAGE_TEXT.get(t.storage, t.storage),

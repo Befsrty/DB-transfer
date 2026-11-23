@@ -20,6 +20,12 @@ types:
   UNIT: "varchar({length})"
   STRING: "text"
   SSTRING: "text"
+  # Типы реляционных источников (Oracle, MS SQL Server), которых нет в ABAP Dictionary
+  FIXCHAR: "char({length})"     # CHAR(n) Oracle и char(n) MS SQL: дополнение пробелами, как в источнике
+  NUMERIC: "numeric"            # NUMBER без точности
+  TIMESTAMP: "timestamp"        # DATE и TIMESTAMP Oracle, datetime и datetime2 MS SQL
+  TIMESTAMPTZ: "timestamptz"    # TIMESTAMP WITH TIME ZONE, datetimeoffset
+  BINARY: "bytea"               # RAW, BLOB, varbinary; в CSV — шестнадцатеричная строка
 # Для прочих типов (RAW, ACCP и т. п.)
 default_type: "text"
 
@@ -33,6 +39,8 @@ storage:
   inbound: ao_column
   change_log: ao_column
   datasource: ao_column
+  table: heap             # таблица Oracle / MS SQL при переносе 1:1 с первичным ключом (AO не допускает PRIMARY KEY)
+  table_nokey: ao_column  # такая же таблица без ключа
 storage_options:
   ao_column: "appendonly=true, orientation=column, compresstype=zstd, compresslevel=1"
 

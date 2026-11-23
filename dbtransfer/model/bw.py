@@ -43,6 +43,21 @@ class ObjectType(StrEnum):
     PROCESS_CHAIN = "CHAIN"
     CLASSIC_DSO = "ODSO"
     DTP = "DTPA"
+    # Объекты реляционных источников (Oracle, MS SQL Server): только для отчёта
+    VIEW = "VIEW"
+    DB_ROUTINE = "PROC"
+    TABLE = "TABL"  # таблица, переносимая 1:1 (DbTable)
+
+
+class SourceKind(StrEnum):
+    """Из чего построена модель: выгрузки SAP BW или словарь реляционной СУБД."""
+
+    SAP_BW = "sap_bw"
+    ORACLE = "oracle"
+    MSSQL = "mssql"
+
+
+SOURCE_LABELS = {SourceKind.SAP_BW: "BW", SourceKind.ORACLE: "Oracle", SourceKind.MSSQL: "MS SQL"}
 
 
 class RuleKind(StrEnum):
@@ -173,6 +188,58 @@ class DataSource(BaseModel):
         return next((f for f in self.fields if f.name == name), None)
 
 
+class Partition(BaseModel):
+    """Секция: для RANGE — верхняя граница, для LIST — список значений. Значения — литералы SQL целевой базы
+    (TIMESTAMP '2027-01-01 00:00:00', 100, 'RU'); MAXVALUE и DEFAULT — секция по умолчанию."""
+
+    name: str
+    values: list[str] = Field(default_factory=list)
+
+    @property
+    def is_default(self) -> bool:
+        return not self.values or self.values[0] in ("MAXVALUE", "DEFAULT")
+
+
+class Partitioning(BaseModel):
+    """Секционирование таблицы источника."""
+
+    kind: str  # RANGE или LIST; HASH в Greenplum заменяется распределением и сюда не попадает
+    columns: list[str] = Field(default_factory=list)
+    partitions: list[Partition] = Field(default_factory=list)
+    # RANGE: граница входит в нижнюю секцию (MS SQL RANGE LEFT); по умолчанию — в верхнюю (Oracle, RANGE RIGHT)
+    upper_inclusive: bool = False
+    note: str = ""  # что не перенесено: интервальное создание секций, подсекции
+
+
+class DbTable(BaseModel):
+    """Таблица реляционного источника, переносимая 1:1: одна таблица в целевой базе с исходным именем.
+    Данные грузятся в неё напрямую из CSV (перезапись по ключу), без входных таблиц и активации."""
+
+    schema_name: str  # схема в источнике
+    name: str
+    description: str = ""
+    fields: list[FieldDef] = Field(default_factory=list)
+    key_kind: str = ""  # первичный, уникальный или пусто
+    partitioning: Partitioning | None = None
+    # Колонки ключа с регистронезависимой сортировкой в источнике (MS SQL *_CI_*): сравниваются через lower()
+    ci_columns: list[str] = Field(default_factory=list)
+
+    @property
+    def key_name(self) -> str:
+        return f"{self.schema_name}.{self.name}"
+
+    @property
+    def ref(self) -> ObjectRef:
+        return ObjectRef(type=ObjectType.TABLE, name=self.key_name)
+
+    @property
+    def key(self) -> list[str]:
+        return [f.name for f in self.fields if f.is_key]
+
+    def field(self, name: str) -> FieldDef | None:
+        return next((f for f in self.fields if f.name == name), None)
+
+
 class Routine(BaseModel):
     kind: RoutineKind
     code_id: str
@@ -221,6 +288,7 @@ class OtherObject(BaseModel):
     name: str
     related: list[ObjectRef] = Field(default_factory=list)
     info: str = ""
+    lines: int = 0  # строк кода (представления, процедуры), для трудоёмкости
 
 
 class InactiveObject(BaseModel):
@@ -236,6 +304,7 @@ class Model(BaseModel):
     schema_version: int = SCHEMA_VERSION
     name: str = ""
     bw_version: str = ""
+    source_kind: SourceKind = SourceKind.SAP_BW
     schema_prefix: str = "dbt"
     source: str = ""
     imported_at: datetime | None = None
@@ -246,6 +315,8 @@ class Model(BaseModel):
     transformations: dict[str, Transformation] = Field(default_factory=dict)
     dtps: dict[str, Dtp] = Field(default_factory=dict)
     others: list[OtherObject] = Field(default_factory=list)
+    # Таблицы реляционного источника, переносимые 1:1 (Oracle, MS SQL Server): «СХЕМА.ТАБЛИЦА» -> таблица
+    tables: dict[str, DbTable] = Field(default_factory=dict)
     inactive: list[InactiveObject] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
     # Сведения о прочитанных файлах для отчёта о проверке: имя -> свойства
@@ -256,9 +327,9 @@ class Model(BaseModel):
         self.issues.append(Issue(severity=severity, message=message, file=file, line=line, object=obj,
                                  skipped=skipped))
 
-    def object(self, ref: ObjectRef) -> Adso | DataSource | InfoObject | None:
+    def object(self, ref: ObjectRef) -> Adso | DataSource | InfoObject | DbTable | None:
         store = {ObjectType.ADSO: self.adsos, ObjectType.DATASOURCE: self.datasources,
-                 ObjectType.INFOOBJECT: self.info_objects}.get(ref.type, {})
+                 ObjectType.INFOOBJECT: self.info_objects, ObjectType.TABLE: self.tables}.get(ref.type, {})
         return store.get(ref.key)
 
     def find(self, name: str) -> Adso | DataSource | InfoObject | OtherObject | None:
@@ -272,11 +343,44 @@ class Model(BaseModel):
             return matches[0]
         if name in self.info_objects:
             return self.info_objects[name]
+        table = self.find_table(name)
+        if table is not None:
+            return table
         return next((o for o in self.others if o.name == name), None)
 
+    def find_table(self, name: str) -> DbTable | None:
+        """Таблица 1:1 по имени SALES.ORDERS, SALES_ORDERS или ORDERS (если однозначно), без учёта регистра."""
+        upper = name.upper()
+        for key, t in self.tables.items():
+            if upper in (key.upper(), f"{t.schema_name}_{t.name}".upper()):
+                return t
+        matches = [t for t in self.tables.values() if t.name.upper() == upper]
+        return matches[0] if len(matches) == 1 else None
+
+    @property
+    def is_bw(self) -> bool:
+        return self.source_kind == SourceKind.SAP_BW
+
+    @property
+    def source_label(self) -> str:
+        return SOURCE_LABELS[self.source_kind]
+
+    def find_datasource(self, name: str) -> DataSource | None:
+        """DataSource по ключу ZSALES_FF/FLATFILE или по имени, если оно однозначно. В моделях из словаря
+        Oracle и MS SQL Server входная таблица и ADSO называются одинаково, find вернул бы ADSO."""
+        if name in self.datasources:
+            return self.datasources[name]
+        matches = [ds for ds in self.datasources.values() if ds.name == name]
+        return matches[0] if len(matches) == 1 else None
+
     def content_hash(self) -> str:
-        """Хеш содержимого без времени импорта: одинаковые выгрузки дают одинаковый хеш."""
-        data = self.model_dump_json(exclude={"imported_at", "source", "files"})
+        """Хеш содержимого без времени импорта: одинаковые выгрузки дают одинаковый хеш.
+        Поля, добавленные для реляционных источников, в хеш не входят: хеш моделей BW не меняется."""
+        exclude: dict = {"imported_at": True, "source": True, "files": True, "source_kind": True,
+                         "others": {"__all__": {"lines"}}}
+        if not self.tables:
+            exclude["tables"] = True
+        data = self.model_dump_json(exclude=exclude)
         return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
 
     def save(self, path: Path) -> None:

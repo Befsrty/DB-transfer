@@ -10,7 +10,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from dbtransfer.analysis.assessment import TYPE_ORDER, Report
-from dbtransfer.config import load_bw_tables
+from dbtransfer.config import source_tables
 from dbtransfer.model import Model, Severity
 
 HEADER_FILL = PatternFill("solid", fgColor="DDE5F0")
@@ -42,7 +42,7 @@ def write_import_check(model: Model, path: Path) -> Path:
     wb = Workbook()
     ws = wb.active
     ws.title = "Файлы"
-    specs = load_bw_tables()
+    specs = source_tables(model.source_kind)
     rows = []
     for name, spec in specs.items():
         info = model.files.get(name, {})

@@ -98,7 +98,8 @@ def test_load_errors_and_formats(project, conn, tmp_path):
     with pytest.raises(LoadError) as e:
         load_file(conn, model, rules, "ZSALES_FF", bad)
     assert [str(x) for x in e.value.errors] == ["строка 2, поле NETVAL «сто»: не число",
-                                                "строка 3, поле CALDAY «20261340»: не дата ГГГГММДД или ДД.ММ.ГГГГ"]
+                                                "строка 3, поле CALDAY «20261340»: "
+                                                "не дата ГГГГММДД, ДД.ММ.ГГГГ или ГГГГ-ММ-ДД"]
     assert conn.execute(f"SELECT count(*) FROM {PREFIX}_stg.zsales_ff").fetchone()[0] == 0
     conn.rollback()
 

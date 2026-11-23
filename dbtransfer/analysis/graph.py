@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import networkx as nx
 
-from dbtransfer.model import Adso, DataSource, Model, ObjectRef, ObjectType, OtherObject
+from dbtransfer.model import Adso, DataSource, DbTable, Model, ObjectRef, ObjectType, OtherObject
 
 
 def node(ref: ObjectRef) -> str:
@@ -21,6 +21,8 @@ def build_graph(model: Model) -> nx.DiGraph:
         g.add_node(node(ds.ref), ref=ds.ref)
     for adso in model.adsos.values():
         g.add_node(node(adso.ref), ref=adso.ref)
+    for t in model.tables.values():
+        g.add_node(node(t.ref), ref=t.ref)
     for t in model.transformations.values():
         g.add_edge(node(t.source), node(t.target), kind="transformation", transformation=t.id)
         g.nodes[node(t.source)].setdefault("ref", t.source)
@@ -50,7 +52,7 @@ class ScopeError(Exception):
 
 def resolve_ref(model: Model, name: str) -> ObjectRef:
     obj = model.find(name)
-    if isinstance(obj, Adso | DataSource):
+    if isinstance(obj, Adso | DataSource | DbTable):
         return obj.ref
     if isinstance(obj, OtherObject):
         return ObjectRef(type=obj.type, name=obj.name)
