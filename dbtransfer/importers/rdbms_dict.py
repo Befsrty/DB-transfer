@@ -111,10 +111,11 @@ class SourceObject:
     lines: int = 0
     text: str = ""
     status: str = ""
+    title: str = ""  # имя в отчёте, если это не схема.имя (скрипт BTEQ — путь к файлу)
 
     @property
     def full_name(self) -> str:
-        return f"{self.schema}.{self.name}"
+        return self.title or f"{self.schema}.{self.name}"
 
 
 @dataclass
@@ -247,6 +248,9 @@ def _check_names(model: Model, t: SourceTable, mode: str) -> None:
     seen: dict[str, str] = {}
     for c in t.columns:
         db = naming.db_name(c.name)
+        if len(db) > MAX_IDENTIFIER:
+            model.issue(Severity.WARNING, f"Имя колонки {c.name} длиннее {MAX_IDENTIFIER} символов: Greenplum его "
+                                          "обрежет. Переименуйте колонку при переносе", obj=t.full_name)
         if db in seen:
             model.issue(Severity.ERROR, f"Колонки {seen[db]} и {c.name} дают одно имя {db} в целевой базе",
                         obj=t.full_name)
@@ -296,7 +300,8 @@ def _check_table(model: Model, t: SourceTable, columns: list[SourceColumn], key:
     ci_key = [c for c in t.ci_columns if c in key]
     if ci_key:
         model.issue(Severity.WARNING, f"Колонки ключа {', '.join(ci_key)} таблицы {t.full_name} в источнике "
-                                      "сравниваются без учёта регистра (collation *_CI_*), а в Greenplum — с учётом. "
+                                      "сравниваются без учёта регистра (MS SQL *_CI_*, Teradata NOT CASESPECIFIC), "
+                                      "а в Greenplum — с учётом. "
                                       "Загрузка и сверка сравнивают их через lower(); соединения в своих запросах "
                                       "тоже пишите через lower()", obj=t.full_name)
     if not key:

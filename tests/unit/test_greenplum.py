@@ -242,7 +242,7 @@ def test_column_check_tolerance():
 def test_transfer_needs_greenplum_model():
     from dbtransfer.importers.oracle_dict import import_oracle_dict
 
-    with pytest.raises(TransferError, match="только для источника Greenplum"):
+    with pytest.raises(TransferError, match="только для источников Greenplum и Teradata"):
         compare_tables(None, None, import_oracle_dict(DATA.parent / "oracle_dict"), RULES)
 
 

@@ -1,0 +1,2 @@
+IndexName,ChildDB,ChildTable,ChildKeyColumn,ParentDB,ParentTable
+FK_Lines_Orders,SALES,OrderLines,OrderId,SALES,Orders

@@ -1,5 +1,5 @@
-"""Синтетические выгрузки словаря Oracle, MS SQL Server и каталога Greenplum 6 для тестов
-(tests/data/oracle_dict, mssql_dict, greenplum_dict).
+"""Синтетические выгрузки словаря Oracle, MS SQL Server, Teradata и каталога Greenplum 6 для тестов
+(tests/data/oracle_dict, mssql_dict, greenplum_dict, teradata_dict).
 
 Запуск: uv run python tests/data/make_dict_samples.py — файлы перезаписываются.
 """
@@ -310,7 +310,131 @@ def greenplum() -> None:
     ])
 
 
+def teradata() -> None:
+    """Словарь DBC Teradata 17.20 в том виде, в каком его возвращают запросы teradata.TERADATA_QUERIES.
+    Коды типов и индексов — по документации Teradata (Data Dictionary, 17.20); живой системы не было."""
+    d = HERE / "teradata_dict"
+    write(d, "DBCInfoV", ["InfoKey", "InfoData"], [
+        ["LANGUAGE SUPPORT MODE", "Standard"], ["RELEASE", "17.20.03.09"], ["VERSION", "17.20.03.09"],
+    ])
+    view = ("REPLACE VIEW SALES.vLastOrder AS LOCKING ROW FOR ACCESS\n"
+            "SEL o.OrderId, o.OrderDate, c.Name\nFROM SALES.Orders o\nJOIN SALES.Customers c "
+            "ON c.CustomerId = o.CustomerId\n"
+            "QUALIFY ROW_NUMBER() OVER (PARTITION BY o.CustomerId ORDER BY o.OrderDate DESC) = 1;")
+    macro = ("REPLACE MACRO SALES.mLoadDay (d DATE) AS (\n"
+             "  DEL FROM SALES.EventLog WHERE CAST(EventTs AS DATE) = :d;\n"
+             "  INS INTO SALES.EventLog SEL * FROM STG.Events WHERE CAST(EventTs AS DATE FORMAT 'YYYY-MM-DD') = :d;\n"
+             ");")
+    proc = ("REPLACE PROCEDURE SALES.spRecalc()\nBEGIN\n"
+            "  MERGE INTO SALES.Customers c USING (SEL CustomerId, ZEROIFNULL(SUM(Amount)) s FROM SALES.Orders "
+            "GROUP BY 1) o\n  ON c.CustomerId = o.CustomerId\n"
+            "  WHEN MATCHED THEN UPDATE SET Segment = CASE WHEN o.s > 1000 THEN 1 ELSE 0 END;\nEND;")
+    write(d, "TablesV", ["DatabaseName", "TableName", "TableKind", "CheckOpt", "CommitOpt", "CommentString",
+                         "RequestText"], [
+        ["SALES", "Customers", "T", "Y", "N", "Клиенты",
+         "CREATE SET TABLE SALES.Customers ... UNIQUE PRIMARY INDEX (CustomerId);"],
+        ["SALES", "Orders", "T", "N", "N", "Заказы",
+         "CREATE MULTISET TABLE SALES.Orders ... PRIMARY INDEX (CustomerId) PARTITION BY RANGE_N(...);"],
+        ["SALES", "OrderLines", "T", "N", "N", "", ""],
+        ["SALES", "EventLog", "T", "Y", "N", "Журнал событий",
+         "CREATE SET TABLE SALES.EventLog (EventType CHAR(10) COMPRESS ('CLICK', 'VIEW'), ...) "
+         "PRIMARY INDEX (EventType);"],
+        ["SALES", "Clicks", "O", "N", "N", "", "CREATE MULTISET TABLE SALES.Clicks (...) NO PRIMARY INDEX "
+                                               "PARTITION BY COLUMN;"],
+        ["SALES", "Daily", "T", "N", "N", "", ""],
+        ["SALES", "TmpLoad", "T", "N", "P", "", ""],
+        ["SALES", "vLastOrder", "V", "N", "N", "", view],
+        ["SALES", "mLoadDay", "M", "N", "N", "", macro],
+        ["SALES", "spRecalc", "P", "N", "N", "", proc],
+        ["SALES", "fnNet", "F", "N", "N", "", ""],
+        ["SALES", "trgOrders", "G", "N", "N", "", "REPLACE TRIGGER SALES.trgOrders AFTER INSERT ON SALES.Orders ..."],
+        ["SALES", "jiOrders", "I", "N", "N", "", "CREATE JOIN INDEX SALES.jiOrders AS SEL CustomerId, OrderDate "
+                                                 "FROM SALES.Orders;"],
+        ["SALES", "hiOrders", "N", "N", "N", "", ""],
+        ["DBC", "TVM", "T", "N", "N", "", ""],
+    ])
+    # DatabaseName, TableName, ColumnName, ColumnId, ColumnType, ColumnLength, DecimalTotalDigits,
+    # DecimalFractionalDigits, Nullable, CharType, UpperCaseFlag, ColumnFormat, IdColType, CommentString
+    cols = [
+        ["SALES", "Customers", "CustomerId", 1025, "I ", 4, "", "", "N", "", "", "-(10)9", "", "Код клиента"],
+        ["SALES", "Customers", "Name", 1026, "CV", 200, "", "", "N", 2, "N", "X(100)", "", ""],
+        ["SALES", "Customers", "Region", 1027, "CF", 2, "", "", "Y", 1, "C", "X(2)", "", ""],
+        ["SALES", "Customers", "Segment", 1028, "I1", 1, "", "", "Y", "", "", "-(3)9", "", ""],
+        ["SALES", "Customers", "CreatedAt", 1029, "TS", 26, "", 6, "Y", "", "", "YYYY-MM-DDBHH:MI:SS.S(6)", "", ""],
+        ["SALES", "Orders", "OrderId", 1025, "I8", 8, "", "", "N", "", "", "-(19)9", "", ""],
+        ["SALES", "Orders", "CustomerId", 1026, "I ", 4, "", "", "N", "", "", "-(10)9", "", ""],
+        ["SALES", "Orders", "OrderDate", 1027, "DA", 4, "", "", "N", "", "", "YY/MM/DD", "", ""],
+        ["SALES", "Orders", "Amount", 1028, "D ", 8, 15, 2, "Y", "", "", "--(13)9.99", "", ""],
+        ["SALES", "Orders", "Status", 1029, "CV", 10, "", "", "Y", 1, "N", "X(10)", "", ""],
+        ["SALES", "Orders", "Delivery", 1030, "DS", 16, 2, 0, "Y", "", "", "", "", ""],
+        ["SALES", "Orders", "Notes", 1031, "CO", 2097152, "", "", "Y", 1, "N", "", "", ""],
+        ["SALES", "OrderLines", "OrderId", 1025, "I8", 8, "", "", "N", "", "", "", "", ""],
+        ["SALES", "OrderLines", "LineNo", 1026, "I2", 2, "", "", "N", "", "", "", "", ""],
+        ["SALES", "OrderLines", "Sku", 1027, "CF", 40, "", "", "N", 2, "C", "X(20)", "", ""],
+        ["SALES", "OrderLines", "Qty", 1028, "D ", 4, 9, 3, "Y", "", "", "", "", ""],
+        ["SALES", "OrderLines", "Price", 1029, "N ", 18, 12, 2, "Y", "", "", "", "", ""],
+        ["SALES", "EventLog", "EventTs", 1025, "SZ", 32, "", 6, "N", "", "", "", "", ""],
+        ["SALES", "EventLog", "EventType", 1026, "CF", 10, "", "", "N", 1, "N", "X(10)", "", ""],
+        ["SALES", "EventLog", "Payload", 1027, "JN", 16000, "", "", "Y", 2, "", "", "", ""],
+        ["SALES", "EventLog", "Validity", 1028, "PD", 8, "", "", "Y", "", "", "", "", ""],
+        ["SALES", "EventLog", "RawData", 1029, "BV", 16, "", "", "Y", "", "", "", "", ""],
+        ["SALES", "EventLog", "Score", 1030, "F ", 8, "", "", "Y", "", "", "", "", ""],
+        ["SALES", "EventLog", "Weight", 1031, "N ", 18, -128, -128, "Y", "", "", "", "", ""],
+        ["SALES", "Clicks", "ClickId", 1025, "I8", 8, "", "", "N", "", "", "", "GA", ""],
+        ["SALES", "Clicks", "Url", 1026, "CV", 2000, "", "", "Y", 1, "C", "", "", ""],
+        ["SALES", "Clicks", "ClickedAt", 1027, "TS", 23, "", 3, "Y", "", "", "", "", ""],
+        ["SALES", "Daily", "D", 1025, "DA", 4, "", "", "N", "", "", "YYYY-MM-DD", "", ""],
+        ["SALES", "Daily", "V", 1026, "I ", 4, "", "", "Y", "", "", "", "", ""],
+        ["SALES", "Daily", "Kind", 1027, "PS", 16, "", "", "Y", "", "", "", "", ""],
+        ["SALES", "TmpLoad", "Id", 1025, "I ", 4, "", "", "N", "", "", "", "", ""],
+        ["SALES", "TmpLoad", "Shape", 1026, "UT", 100, "", "", "Y", "", "", "", "", ""],
+        ["SALES", "TmpLoad", "Odd", 1027, "ZZ", 4, "", "", "Y", "", "", "", "", ""],
+        ["DBC", "TVM", "TVMId", 1025, "BF", 6, "", "", "N", "", "", "", "", ""],
+    ]
+    write(d, "ColumnsV", ["DatabaseName", "TableName", "ColumnName", "ColumnId", "ColumnType", "ColumnLength",
+                          "DecimalTotalDigits", "DecimalFractionalDigits", "Nullable", "CharType", "UpperCaseFlag",
+                          "ColumnFormat", "IdColType", "CommentString"], cols)
+    write(d, "IndicesV", ["DatabaseName", "TableName", "IndexNumber", "IndexType", "UniqueFlag", "IndexName",
+                          "ColumnName", "ColumnPosition"], [
+        ["SALES", "Customers", 1, "P", "Y", "", "CustomerId", 1],
+        ["SALES", "Orders", 1, "Q", "N", "", "CustomerId", 1],
+        ["SALES", "Orders", 4, "K", "Y", "PK_Orders", "OrderId", 1],
+        ["SALES", "OrderLines", 1, "Q", "Y", "", "LineNo", 2],
+        ["SALES", "OrderLines", 1, "Q", "Y", "", "OrderId", 1],
+        ["SALES", "OrderLines", 4, "S", "N", "", "Sku", 1],
+        ["SALES", "EventLog", 1, "P", "N", "", "EventType", 1],
+        ["SALES", "Daily", 1, "Q", "N", "", "D", 1],
+        ["SALES", "TmpLoad", 1, "P", "N", "", "Id", 1],
+    ])
+    write(d, "PartitioningConstraintsV", ["DatabaseName", "TableName", "ConstraintText", "PartitioningLevels",
+                                          "ColumnPartitioningLevel"], [
+        ["SALES", "Orders", "CHECK ((RANGE_N(OrderDate  BETWEEN DATE '2024-01-01' AND DATE '2024-12-31' "
+                            "EACH INTERVAL '1' MONTH , NO RANGE)) BETWEEN 1 AND 13)", 1, 0],
+        ["SALES", "OrderLines", "CHECK ((RANGE_N(LineNo  BETWEEN 1  AND 100  EACH 25 , UNKNOWN)) BETWEEN 1 AND 5)",
+         1, 0],
+        ["SALES", "Clicks", "CHECK (/*01 02 */ PARTITION#L1 /*1 9+10*/ =1)", 1, 1],
+        ["SALES", "Daily", "CHECK (/*02 03 */ PARTITION#L1 /*1 3653+0*/ = RANGE_N(D  BETWEEN DATE '2015-01-01' "
+                           "AND DATE '2024-12-31' EACH INTERVAL '1' DAY ) AND PARTITION#L2 /*2 2+0*/ = "
+                           "CASE_N(V <  0 , NO CASE) IS NOT NULL )", 2, 0],
+    ])
+    write(d, "All_RI_ChildrenV", ["IndexName", "ChildDB", "ChildTable", "ChildKeyColumn", "ParentDB",
+                                  "ParentTable"], [
+        ["FK_Lines_Orders", "SALES", "OrderLines", "OrderId", "SALES", "Orders"],
+    ])
+    scripts = d / "bteq"
+    scripts.mkdir(exist_ok=True)
+    (scripts / "load_orders.bteq").write_text(
+        ".LOGON tdprod/etl,secret;\nDATABASE SALES;\n\nDEL FROM Orders WHERE OrderDate = DATE;\n"
+        "INS INTO Orders SEL * FROM STG.Orders;\n.IF ERRORCODE <> 0 THEN .QUIT 8;\n"
+        "COLLECT STATISTICS ON Orders COLUMN (OrderDate);\n.LOGOFF;\n.QUIT 0;\n", encoding="utf-8")
+    (scripts / "customers.fld").write_text(
+        "SESSIONS 4;\nLOGON tdprod/etl,secret;\nDEFINE CustomerId (VARCHAR(10)), Name (VARCHAR(100))\n"
+        "FILE = customers.txt;\nBEGIN LOADING SALES.Customers ERRORFILES SALES.Cust_e1, SALES.Cust_e2;\n"
+        "INSERT INTO SALES.Customers VALUES (:CustomerId, :Name);\nEND LOADING;\nLOGOFF;\n", encoding="utf-8")
+
+
 if __name__ == "__main__":
     oracle()
     mssql()
     greenplum()
+    teradata()

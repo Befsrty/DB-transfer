@@ -1,0 +1,9 @@
+.LOGON tdprod/etl,secret;
+DATABASE SALES;
+
+DEL FROM Orders WHERE OrderDate = DATE;
+INS INTO Orders SEL * FROM STG.Orders;
+.IF ERRORCODE <> 0 THEN .QUIT 8;
+COLLECT STATISTICS ON Orders COLUMN (OrderDate);
+.LOGOFF;
+.QUIT 0;

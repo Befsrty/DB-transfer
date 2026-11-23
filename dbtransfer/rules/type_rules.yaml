@@ -26,6 +26,12 @@ types:
   TIMESTAMP: "timestamp"        # DATE и TIMESTAMP Oracle, datetime и datetime2 MS SQL
   TIMESTAMPTZ: "timestamptz"    # TIMESTAMP WITH TIME ZONE, datetimeoffset
   BINARY: "bytea"               # RAW, BLOB, varbinary; в CSV — шестнадцатеричная строка
+  # Teradata (dbtransfer/importers/teradata.py) использует те же типы модели: CHAR/VARCHAR -> FIXCHAR/CHAR
+  # (длина UNICODE в символах), BYTEINT/SMALLINT -> INT2, INTEGER -> INT4, BIGINT -> INT8, DECIMAL и NUMBER(p,s) ->
+  # DEC, NUMBER -> NUMERIC, FLOAT -> FLTP, DATE -> DATS, TIME -> TIMS, TIMESTAMP -> TIMESTAMP, TIMESTAMP WITH TIME
+  # ZONE -> TIMESTAMPTZ, BYTE/VARBYTE/BLOB -> BINARY, CLOB/XML/PERIOD/UDT/ARRAY -> STRING. INTERVAL, TIME WITH TIME
+  # ZONE и JSON переносятся типом цели напрямую (interval day to second, timetz, jsonb). Нераспознанный код типа
+  # (DBC.ColumnsV.ColumnType) становится ключом этой таблицы: types: {XX: "text"} в type_rules.yaml проекта.
 # Для прочих типов (RAW, ACCP и т. п.)
 default_type: "text"
 

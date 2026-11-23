@@ -48,6 +48,7 @@ class ObjectType(StrEnum):
     DB_ROUTINE = "PROC"
     TABLE = "TABL"  # таблица, переносимая 1:1 (DbTable)
     EXTERNAL_TABLE = "EXTT"  # внешняя таблица Greenplum (gpfdist, PXF, s3): только для отчёта
+    SCRIPT = "SCRP"  # скрипт BTEQ, FastLoad, MultiLoad, TPT (Teradata): только для отчёта
 
 
 class SourceKind(StrEnum):
@@ -57,10 +58,11 @@ class SourceKind(StrEnum):
     ORACLE = "oracle"
     MSSQL = "mssql"
     GREENPLUM = "greenplum"  # Greenplum 6/7, Yandex MPP, Cloudberry, ADB, Greengage: та же семья, что и цель
+    TERADATA = "teradata"  # Teradata, Vantage: словарь DBC
 
 
 SOURCE_LABELS = {SourceKind.SAP_BW: "BW", SourceKind.ORACLE: "Oracle", SourceKind.MSSQL: "MS SQL",
-                 SourceKind.GREENPLUM: "Greenplum"}
+                 SourceKind.GREENPLUM: "Greenplum", SourceKind.TERADATA: "Teradata"}
 
 
 class RuleKind(StrEnum):

@@ -1,0 +1,104 @@
+# Словарь Teradata, из которого строится модель (dbtransfer/importers/teradata.py).
+#
+# Представления DBC (Teradata 15.10+, Vantage): TablesV, ColumnsV, IndicesV, PartitioningConstraintsV,
+# All_RI_ChildrenV, DBCInfoV. Каждый запрос из `dbtransfer tables --source teradata` выгружается в CSV под
+# именем представления (TablesV.csv и т. д.) либо выполняется при подключении через teradatasql.
+# Имена колонок — как в DBC (DatabaseName, TableName, ...), регистр в заголовке CSV не важен.
+# Поля описания — как в bw_tables.yaml. version_column у словаря нет: берутся все строки.
+
+tables:
+  DBCINFOV:
+    group: Сервер
+    purpose: Версия Teradata и режим сессии по умолчанию
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      INFOKEY: {required: true}
+      INFODATA: {required: true}
+
+  TABLESV:
+    group: Таблицы
+    purpose: Таблицы (SET / MULTISET, NoPI), представления, макросы, процедуры, функции, триггеры, join-индексы
+    level: "1"
+    required: true
+    hypothesis: false
+    version_column: ""
+    columns:
+      DATABASENAME: {required: true}
+      TABLENAME: {required: true}
+      TABLEKIND: {required: true}
+      CHECKOPT: {}
+      COMMITOPT: {}
+      COMMENTSTRING: {}
+      REQUESTTEXT: {}
+
+  COLUMNSV:
+    group: Таблицы
+    purpose: Колонки, коды типов (ColumnType), длина, точность, NULL, набор символов, CASESPECIFIC
+    level: "1"
+    required: true
+    hypothesis: false
+    version_column: ""
+    columns:
+      DATABASENAME: {required: true}
+      TABLENAME: {required: true}
+      COLUMNNAME: {required: true}
+      COLUMNID: {required: true}
+      COLUMNTYPE: {required: true}
+      COLUMNLENGTH: {}
+      DECIMALTOTALDIGITS: {}
+      DECIMALFRACTIONALDIGITS: {}
+      NULLABLE: {}
+      CHARTYPE: {}
+      UPPERCASEFLAG: {}
+      COLUMNFORMAT: {}
+      IDCOLTYPE: {}
+      COMMENTSTRING: {}
+
+  INDICESV:
+    group: Ключи
+    purpose: Первичный индекс (UPI / NUPI, PA), первичный и уникальные ключи, уникальные вторичные индексы
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      DATABASENAME: {required: true}
+      TABLENAME: {required: true}
+      INDEXNUMBER: {required: true}
+      INDEXTYPE: {required: true}
+      UNIQUEFLAG: {required: true}
+      INDEXNAME: {}
+      COLUMNNAME: {required: true}
+      COLUMNPOSITION: {required: true}
+
+  PARTITIONINGCONSTRAINTSV:
+    group: Секционирование
+    purpose: Выражение секционирования PPI (RANGE_N, CASE_N) и колоночное секционирование
+    level: "1"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      DATABASENAME: {required: true}
+      TABLENAME: {required: true}
+      CONSTRAINTTEXT: {required: true}
+      PARTITIONINGLEVELS: {}
+      COLUMNPARTITIONINGLEVEL: {}
+
+  ALL_RI_CHILDRENV:
+    group: Ключи
+    purpose: Внешние ключи (ссылочная целостность, в том числе мягкая WITH NO CHECK OPTION)
+    level: "2"
+    required: false
+    hypothesis: false
+    version_column: ""
+    columns:
+      INDEXNAME: {}
+      CHILDDB: {required: true}
+      CHILDTABLE: {required: true}
+      CHILDKEYCOLUMN: {required: true}
+      PARENTDB: {required: true}
+      PARENTTABLE: {required: true}

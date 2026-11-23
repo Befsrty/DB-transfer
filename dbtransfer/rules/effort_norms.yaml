@@ -23,3 +23,5 @@ view_same_family: 0.5
 view_same_family_per_50_lines: 0.25
 db_routine_same_family: 1
 db_routine_same_family_per_50_lines: 0.5
+script: 4                    # скрипт BTEQ / FastLoad / MultiLoad / TPT (Teradata)
+script_per_50_lines: 2       # плюс за каждые начатые 50 строк
