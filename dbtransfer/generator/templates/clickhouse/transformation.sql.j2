@@ -1,0 +1,28 @@
+-- Трансформация {{ t.source_name }} → {{ t.target_name }} ({{ t.tr_id }})
+-- {{ t.mode_text }}
+{% for note in t.notes %}
+-- {{ note }}
+{% endfor %}
+-- Выполняется прогоном с параметром {p_load_id:Int64}. join_use_nulls = 1: строка без пары в справочнике
+-- даёт NULL, как в Greengage, а не пустое значение по умолчанию ClickHouse.
+{% if t.stub %}
+--
+-- ЗАГОТОВКА: требует ручной доработки. Причины:
+{% for reason in t.stub %}
+--   - {{ reason }}
+{% endfor %}
+-- Прогон через эту трансформацию заблокирован. Черновик INSERT по поддерживаемым правилам:
+--
+{{ t.insert | sql_comment }}
+{% for r in t.routines %}
+--
+-- Рутина ABAP: {{ r.title }}
+{{ r.code | sql_comment }}
+{% endfor %}
+-- Шаг: остановка прогона: трансформация требует ручной доработки
+SELECT throwIf(1, {{ t.message.replace("%%", "%") | ch_literal }});
+{% else %}
+-- Шаг: запись во входящую таблицу цели; число строк — written_rows в итоге запроса
+{{ t.insert[:-1] }}
+SETTINGS join_use_nulls = 1;
+{% endif %}

@@ -38,6 +38,8 @@ class TypeRules:
     storage: dict[str, str]
     storage_options: dict[str, str]
     overrides: dict[str, dict] = field(default_factory=dict)
+    # Правила для ClickHouse: второй шаг перевода типов, движки таблиц (секция clickhouse в type_rules.yaml)
+    clickhouse: dict = field(default_factory=dict)
     # Типы, которых нет в правилах: тип -> поля, для предупреждений генерации
     unknown: dict[str, list[str]] = field(default_factory=dict)
 

@@ -13,3 +13,4 @@ tables:
   change_log: "{name}_changelog"
   md_attr: "{name}_attr"
   md_text: "{name}_text"
+  work: "{name}_work"     # только ClickHouse: рабочая таблица активации cumulative ADSO

@@ -1,0 +1,34 @@
+-- Активация ADSO {{ adso }} (standard) по ТЗ 4.3.5: из дублей ключа берётся запись с наибольшим record_no;
+-- новый ключ — вставка и N в журнал, существующий — пара X / ' ' в журнал и замена строки.
+-- В ClickHouse нет процедур и транзакций: вместо функции PL/pgSQL — шаги, которые прогон выполняет
+-- по очереди с параметром {p_load_id:Int64}. Если шаг упал, строки загрузки в журнале изменений
+-- нужно удалить и повторить активацию целиком.
+-- Шаг: проверка: удаления и обратные записи (recordmode D, R) не поддерживаются
+SELECT throwIf(count() > 0, {{ (adso ~ ": в загрузке есть записи с recordmode D или R, удаления и обратные записи не поддерживаются") | ch_literal }})
+FROM {{ inbound }}
+WHERE load_id = {{ p }} AND recordmode IN ('D', 'R');
+-- Шаг: before image (X) в журнал изменений: старые значения, показатели с минусом
+INSERT INTO {{ change_log }} (load_id, record_no, recordmode, {{ columns | join(", ") }})
+SELECT {{ p }}, d.record_no, 'X', {{ before | join(", ") }}
+FROM {{ active }} a
+INNER JOIN ({{ dedup }}) d
+  ON {{ join_ad }};
+-- Шаг: after image (' ') для существующих ключей и N для новых
+INSERT INTO {{ change_log }} (load_id, record_no, recordmode, {{ columns | join(", ") }})
+SELECT {{ p }}, d.record_no, if(coalesce(a._hit, 0) = 1, ' ', 'N'),
+       {{ after | join(", ") }}
+FROM ({{ dedup }}) d
+LEFT JOIN (SELECT {{ key_list }}, 1 AS _hit FROM {{ active }}) a
+  ON {{ join_ad }};
+-- Шаг: удаление заменяемых строк активных данных (lightweight DELETE)
+DELETE FROM {{ active }}
+WHERE ({{ key_list }}) IN (SELECT {{ key_list }} FROM {{ inbound }} WHERE load_id = {{ p }});
+-- Шаг: новые строки активных данных
+INSERT INTO {{ active }} ({{ columns | join(", ") }})
+SELECT {{ after | join(", ") }}
+FROM ({{ dedup }}) d;
+-- Шаг: итог для журнала загрузок: активировано, новых, изменённых
+SELECT countIf(recordmode <> 'X') AS activated, countIf(recordmode = 'N') AS new_rows,
+       countIf(recordmode = 'X') AS changed_rows
+FROM {{ change_log }}
+WHERE load_id = {{ p }};

@@ -362,7 +362,8 @@ def tab_sql(project: Project, model: Model) -> None:
         return
     c1, c2 = st.columns(2)
     dialect = c1.selectbox("Диалект", DIALECTS, format_func={"greenplum": "Greengage / Greenplum",
-                                                             "postgres": "PostgreSQL"}.get)
+                                                             "postgres": "PostgreSQL",
+                                                             "clickhouse": "ClickHouse (Yandex Cloud)"}.get)
     only_scope = c2.checkbox("Только состав переноса", value=False, disabled=not project.config.scope_from)
     try:
         package = generate(model, rules, dialect, project.config.scope_from if only_scope else None)
@@ -371,7 +372,12 @@ def tab_sql(project: Project, model: Model) -> None:
         return
     counts = package.counts()
     st.caption(f"Схем {counts.get('schema', 0)}, таблиц {counts.get('table', 0)}, функций {counts.get('function', 0)}, "
-               f"строк SQL {package.sql_lines}")
+               + (f"пошаговых скриптов {counts['steps']}, " if counts.get("steps") else "")
+               + f"строк SQL {package.sql_lines}")
+    if package.clickhouse:
+        st.info("ClickHouse: пакет только генерируется. Развёртывание и прогон из приложения пока работают "
+                "с Greengage и PostgreSQL; DDL можно выполнить вручную: clickhouse-client --multiquery "
+                "--queries-file deploy_all.sql")
     for o in package.stubs:
         st.warning(f"Заготовка, требует ручной доработки: {o.bw_object} ({'; '.join(o.stub)})")
     options = ["Весь пакет"] + sorted({o.bw_object for o in package.objects if o.bw_object})

@@ -44,3 +44,36 @@ storage_options:
 #     distributed_by: [doc_number, s_ord_item]
 #     storage: {inbound: heap}
 overrides: {}
+
+# Целевая СУБД ClickHouse (в том числе Yandex Managed Service for ClickHouse): dbtransfer generate --dialect clickhouse.
+# Типы выше переводятся второй ступенью: тип PostgreSQL -> тип ClickHouse по базовому имени,
+# {p}, {s} — точность и масштаб из numeric(p,s). Колонки без NOT NULL становятся Nullable(...).
+clickhouse:
+  types:
+    varchar: String               # длина varchar(n) в ClickHouse не проверяется
+    char: String
+    text: String
+    numeric: "Decimal({p},{s})"
+    smallint: Int16
+    integer: Int32
+    bigint: Int64
+    double precision: Float64
+    date: Date32                  # диапазон 1900-01-01 … 2299-12-31
+    time: String                  # своего типа времени суток в стабильных версиях нет: строка ЧЧ:ММ:СС
+    timestamp: DateTime64(3)
+    jsonb: String
+  # numeric без точности (служебные таблицы сверки)
+  numeric_default: "Decimal(38,10)"
+  # Пустая дата в ключевом поле: 0001-01-01 вне диапазона Date32
+  date_key_placeholder: "1900-01-01"
+  # Движок таблицы по роли. Для кластера из нескольких хостов в Yandex Cloud замените на
+  # ReplicatedMergeTree / ReplicatedReplacingMergeTree (тогда DDL нужно выполнять с ON CLUSTER).
+  engines:
+    md_attr: ReplacingMergeTree   # повторная загрузка справочника заменяет строку по ключу
+    md_text: ReplacingMergeTree
+    active: MergeTree             # замена строк — DELETE + INSERT в шагах активации
+    inbound: MergeTree
+    change_log: MergeTree
+    datasource: MergeTree
+    work: MergeTree
+    meta: MergeTree

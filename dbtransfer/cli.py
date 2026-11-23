@@ -234,7 +234,8 @@ def generate_cmd(
     kinds = package.counts()
     lines = sum(p.read_text(encoding="utf-8").count("\n") for p in paths if p.name[0].isdigit())
     typer.echo(f"Схем: {kinds.get('schema', 0)}, таблиц: {kinds.get('table', 0)}, "
-               f"функций: {kinds.get('function', 0)}; строк SQL: {lines}")
+               f"функций: {kinds.get('function', 0)}"
+               + (f", пошаговых скриптов: {kinds['steps']}" if kinds.get("steps") else "") + f"; строк SQL: {lines}")
     for o in package.stubs:
         typer.secho(f"  Заготовка, требует ручной доработки: {o.bw_object} ({'; '.join(o.stub)})",
                     fg=typer.colors.YELLOW)

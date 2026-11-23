@@ -10,6 +10,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from dbtransfer.generator.dialect import POSTGRES, SqlDialect
 from dbtransfer.generator.types import NUMERIC_TYPES
 from dbtransfer.model import FieldDef
 
@@ -54,10 +55,11 @@ def tokenize(formula: str) -> list[Token]:
 
 
 class _Parser:
-    def __init__(self, formula: str, resolve: Resolver):
+    def __init__(self, formula: str, resolve: Resolver, dialect: SqlDialect = POSTGRES):
         self.tokens = tokenize(formula)
         self.i = 0
         self.resolve = resolve
+        self.d = dialect
 
     # --- навигация ---
     def peek(self) -> Token | None:
@@ -196,19 +198,19 @@ class _Parser:
         elif name == "CONCATENATE":
             sql = f"concat({', '.join(args)})"
         elif name == "SUBSTRING":
-            sql = f"substr({args[0]}, {args[1]} + 1, {args[2]})"
+            sql = self.d.substr(args[0], args[1], args[2])
         elif name == "STRLEN":
-            sql = f"length({args[0]})"
+            sql = self.d.strlen(args[0])
         elif name == "TOUPPER":
-            sql = f"upper({args[0]})"
+            sql = self.d.upper(args[0])
         elif name == "ABS":
             sql = f"abs({args[0]})"
         elif name == "ROUND":
             sql = f"round({args[0]}, {args[1]})"
         elif name == "DATE_YEAR":
-            sql = f"coalesce(to_char({args[0]}, 'YYYY'), '0000')"
+            sql = f"coalesce({self.d.date_to_text(args[0], 'YYYY')}, '0000')"
         else:
-            sql = f"coalesce(to_char({args[0]}, 'YYYYMM'), '000000')"
+            sql = f"coalesce({self.d.date_to_text(args[0], 'YYYYMM')}, '000000')"
         return (sql, P_ATOM)
 
     def is_initial(self) -> tuple[str, int]:
@@ -231,8 +233,8 @@ class _Parser:
         return (f"({check})", P_ATOM)
 
 
-def translate(formula: str, resolve: Resolver) -> str:
+def translate(formula: str, resolve: Resolver, dialect: SqlDialect = POSTGRES) -> str:
     """Формула BW -> выражение SQL. FormulaError, если перевести нельзя."""
     if not formula or not formula.strip():
         raise FormulaError("пустая формула")
-    return _Parser(formula, resolve).parse()
+    return _Parser(formula, resolve, dialect).parse()
