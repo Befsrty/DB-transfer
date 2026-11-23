@@ -19,12 +19,12 @@ from dbtransfer.generator.sql import ident, literal, qualified, sql_comment
 from dbtransfer.generator.tables import Column, TableBuilder, TableDef
 from dbtransfer.generator.transform import TransformBuilder, TransformSql
 from dbtransfer.generator.types import TypeRules, is_key_figure
-from dbtransfer.model import Adso, AdsoKind, InfoObjectKind, Model, RuleKind
+from dbtransfer.model import Adso, AdsoKind, InfoObjectKind, Model, ObjectType, RuleKind
 
 LAYERS = ("stg", "md", "dwh", "mart", "meta")
 # Группа -> файл и заголовок, в порядке развёртывания (ФП-6.1). Файлы необязательных групп без объектов
 # не пишутся: у моделей BW нет таблиц 1:1, и их пакет остаётся прежним
-OPTIONAL_GROUPS = {"tables"}
+OPTIONAL_GROUPS = {"tables", "views"}
 GROUPS = {
     "schemas": ("010_schemas.sql", "Схемы слоёв"),
     "meta": ("020_meta.sql", "Служебные таблицы"),
@@ -34,6 +34,13 @@ GROUPS = {
     "adso": ("050_adso.sql", "Таблицы ADSO"),
     "activation": ("060_activation.sql", "Функции активации ADSO"),
     "transformations": ("070_transformations.sql", "Трансформации"),
+    "views": ("080_views.sql", "Представления источника, переведённые автоматически (dbtransfer translate)"),
+}
+# Черновики перевода: в deploy_all.sql не входят, разворачиваются вручную после доработки TODO
+DRAFT_FILES = {
+    "views": ("drafts_views.sql", "Черновики представлений: переведены не полностью, см. TODO"),
+    "routines": ("drafts_routines.sql", "Черновики процедур и функций на PL/pgSQL: проверьте и доработайте TODO, "
+                                        "затем разверните вручную (psql -f)"),
 }
 SEQUENCES = ("load_id_seq", "deploy_id_seq", "reconcile_run_seq")
 
@@ -60,6 +67,8 @@ class Package:
     schema_prefix: str = "dbt"
     objects: list[SqlObject] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Переводы представлений и процедур источника (dbtransfer.translate): и готовые, и черновики
+    translations: list = field(default_factory=list)
 
     @property
     def meta_schema(self) -> str:
@@ -139,6 +148,12 @@ class Package:
         drop = "DROP DATABASE IF EXISTS {};\n" if self.clickhouse else "DROP SCHEMA IF EXISTS {} CASCADE;\n"
         result["drop_all.sql"] = (self.header("Удаление всех схем прототипа вместе с данными и журналами")
                                   + "\n" + "".join(drop.format(s) for s in reversed(schemas)))
+        drafts = {"views": [t for t in self.translations if t.type == ObjectType.VIEW and not t.auto],
+                  "routines": [t for t in self.translations if t.type == ObjectType.DB_ROUTINE]}
+        for group, items in drafts.items():
+            if items:
+                file_name, title = DRAFT_FILES[group]
+                result[file_name] = self.header(title) + "\n" + "\n".join(t.sql for t in items)
         return result
 
     def write(self, out_dir: Path) -> list[Path]:
@@ -174,6 +189,7 @@ class Generator:
         self._select_scope(scope)
 
     def _select_scope(self, scope: str | None) -> None:
+        self.scope = scope
         m = self.model
         if scope is None:
             self.adsos = sorted(m.adsos.values(), key=lambda a: a.name)
@@ -232,6 +248,8 @@ class Generator:
         for adso in self.adsos:
             self._activation(adso)
         self._transformations()
+        if self.scope is None:
+            self._translations()
         self.package.warnings.extend(self.tables.warnings)
         for datatype, fields in sorted(self.rules.unknown.items()):
             self.package.warnings.append(f"Тип {datatype} нет в type_rules.yaml, взят {self.rules.default_type}: "
@@ -338,6 +356,17 @@ class Generator:
             sql = self.env.get_template("transformation.sql.j2").render(t=t)
             self.add("transformations", "function", f"{t.fn}(bigint)", sql,
                      bw_object=f"Трансформация {tr.source.name} → {tr.target.name}", stub=list(t.stub), ref=tr.id)
+
+
+    def _translations(self) -> None:
+        """Представления и процедуры источника: представления, переведённые автоматически, — в пакет,
+        остальные представления и все процедуры — в черновики (drafts_*.sql)."""
+        from dbtransfer.translate import translate_model
+
+        for t in translate_model(self.model, self.dialect, self.rules):
+            self.package.translations.append(t)
+            if t.type == ObjectType.VIEW and t.auto:
+                self.add("views", "view", t.target, t.sql, bw_object=f"Представление {t.name}")
 
 
 def generate(model: Model, rules: TypeRules | None = None, dialect: str = "greenplum",

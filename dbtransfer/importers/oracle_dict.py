@@ -65,8 +65,11 @@ ORACLE_QUERIES = {
     "ALL_VIEWS": f"SELECT OWNER, VIEW_NAME, TEXT FROM ALL_VIEWS WHERE {_OWNER}",
     "ALL_OBJECTS": f"SELECT OWNER, OBJECT_NAME, OBJECT_TYPE, STATUS FROM ALL_OBJECTS WHERE {_OWNER} "
                    "AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE', 'TRIGGER', 'TYPE', 'MATERIALIZED VIEW')",
-    "ALL_SOURCE": f"SELECT OWNER, NAME, TYPE, COUNT(*) AS LINES FROM ALL_SOURCE WHERE {_OWNER} "
-                  "GROUP BY OWNER, NAME, TYPE",
+    # Строки кода целиком: по ним переводчик делает черновики PL/pgSQL (выгрузка с GROUP BY и LINES тоже
+    # читается, но тогда в отчёте только число строк)
+    "ALL_SOURCE": f"SELECT OWNER, NAME, TYPE, LINE, TEXT FROM ALL_SOURCE WHERE {_OWNER} "
+                  "AND TYPE IN ('PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY', 'TRIGGER', 'TYPE', 'TYPE BODY') "
+                  "ORDER BY OWNER, NAME, TYPE, LINE",
     "ALL_PART_TABLES": f"SELECT OWNER, TABLE_NAME, PARTITIONING_TYPE, SUBPARTITIONING_TYPE, INTERVAL "
                        f"FROM ALL_PART_TABLES WHERE {_OWNER}",
     "ALL_PART_KEY_COLUMNS": f"SELECT OWNER, NAME, OBJECT_TYPE, COLUMN_NAME, COLUMN_POSITION FROM ALL_PART_KEY_COLUMNS "
@@ -339,8 +342,14 @@ def catalog_from(files: dict[str, TableFile], keep) -> Catalog:
         catalog.objects.append(SourceObject(schema=r["OWNER"], name=r["VIEW_NAME"], type=ObjectType.VIEW,
                                             label="представление", lines=count_lines(text), text=text))
     lines: dict[tuple[str, str], int] = defaultdict(int)
+    code: dict[tuple[str, str], list[tuple[int, str]]] = defaultdict(list)
     for r in rows("ALL_SOURCE"):
-        lines[(r["OWNER"], r["NAME"])] += to_int(r["LINES"])  # PACKAGE и PACKAGE BODY вместе
+        if r.get("TEXT") is not None and r.get("LINE") not in (None, ""):
+            lines[(r["OWNER"], r["NAME"])] += 1  # строка кода; PACKAGE и PACKAGE BODY вместе
+            if r["TYPE"].upper() != "PACKAGE":  # спецификация пакета не переводится, только тело
+                code[(r["OWNER"], r["NAME"])].append((to_int(r["LINE"]), r["TEXT"]))
+        else:
+            lines[(r["OWNER"], r["NAME"])] += to_int(r.get("LINES"))
     labels = {"PROCEDURE": "процедура PL/SQL", "FUNCTION": "функция PL/SQL", "PACKAGE": "пакет PL/SQL",
               "TRIGGER": "триггер", "TYPE": "объектный тип", "MATERIALIZED VIEW": "материализованное представление"}
     for r in rows("ALL_OBJECTS"):
@@ -351,8 +360,17 @@ def catalog_from(files: dict[str, TableFile], keep) -> Catalog:
         catalog.objects.append(SourceObject(
             schema=r["OWNER"], name=r["OBJECT_NAME"],
             type=ObjectType.VIEW if kind == "MATERIALIZED VIEW" else ObjectType.DB_ROUTINE, label=labels[kind],
-            lines=lines.get((r["OWNER"], r["OBJECT_NAME"]), 0), status="INVALID" if status == "INVALID" else ""))
+            lines=lines.get((r["OWNER"], r["OBJECT_NAME"]), 0), status="INVALID" if status == "INVALID" else "",
+            text=_source_text(code.get((r["OWNER"], r["OBJECT_NAME"]), [])) if kind != "MATERIALIZED VIEW" else ""))
     return catalog
+
+
+def _source_text(rows: list[tuple[int, str]]) -> str:
+    """Строки ALL_SOURCE -> текст «CREATE OR REPLACE PROCEDURE …» (в словаре он без CREATE)."""
+    if not rows:
+        return ""
+    text = "".join(t if t.endswith("\n") else t + "\n" for _, t in sorted(rows, key=lambda x: x[0]))
+    return "CREATE OR REPLACE " + text.lstrip()
 
 
 def connect(url: str, password: str | None = None):

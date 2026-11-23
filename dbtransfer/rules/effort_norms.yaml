@@ -25,3 +25,9 @@ db_routine_same_family: 1
 db_routine_same_family_per_50_lines: 0.5
 script: 4                    # скрипт BTEQ / FastLoad / MultiLoad / TPT (Teradata)
 script_per_50_lines: 2       # плюс за каждые начатые 50 строк
+# Переводчик SQL (dbtransfer.translate): что остаётся после автоматического перевода
+view_translated: 0.25        # представление переведено автоматически: проверить результат на данных
+view_translated_per_50_lines: 0.1
+routine_draft_review: 1      # черновик PL/pgSQL: прочитать, проверить на данных
+routine_draft_review_per_50_lines: 0.5
+translation_todo: 0.5        # каждая пометка TODO в черновике (представления или процедуры)

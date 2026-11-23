@@ -115,6 +115,7 @@ uv run dbtransfer import <папка> --source oracle  # модель по сл�
 uv run dbtransfer import --source greenplum --url greenplum://user@host:5432/dwh  # каталог Greenplum (docs/greenplum.md)
 uv run dbtransfer transfer --url greenplum://user@host:5432/dwh  # данные Greenplum -> цель и сверка строк и сумм
 uv run dbtransfer import <папка> --source teradata  # словарь DBC Teradata и скрипты BTEQ (docs/teradata.md)
+uv run dbtransfer translate view.sql --from oracle  # перевести один запрос или процедуру (docs/translator.md)
 uv run dbtransfer transfer --url "teradata://user@host/?logmech=LDAP"  # данные Teradata -> цель и сверка
 uv run dbtransfer import                          # импорт demo/bw_export -> demo/model.json, demo/out/import_check.xlsx
 uv run dbtransfer report                          # отчёт о сложности -> demo/out/complexity.xlsx
@@ -332,6 +333,7 @@ docker-compose.yml   база Greengage
 | [docs/rdbms-import.md](docs/rdbms-import.md) | Импорт из Oracle и MS SQL Server: выгрузка словаря, перевод типов, допущения |
 | [docs/greenplum.md](docs/greenplum.md) | Импорт из Greenplum 6/7, Yandex MPP, Cloudberry: что переносится как есть, перенос данных, сверка |
 | [docs/teradata.md](docs/teradata.md) | Импорт из Teradata: первичный индекс, SET-таблицы, секции RANGE_N, типы, код и BTEQ, перенос данных, допущения |
+| [docs/translator.md](docs/translator.md) | Переводчик SQL: представления Oracle / T-SQL / Teradata в Greenplum и ClickHouse, черновики процедур PL/pgSQL, доля автоперевода в отчёте |
 | [docs/architecture.md](docs/architecture.md) | Устройство приложения, добавление источника и целевой СУБД |
 | [docs/demo-script.md](docs/demo-script.md) | Сценарий демонстрации на 5–7 минут |
 | [docs/acceptance.md](docs/acceptance.md) | Протокол приёмочных испытаний |

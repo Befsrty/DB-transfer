@@ -307,6 +307,9 @@ class OtherObject(BaseModel):
     related: list[ObjectRef] = Field(default_factory=list)
     info: str = ""
     lines: int = 0  # строк кода (представления, процедуры), для трудоёмкости
+    # Текст SQL представления или кода процедуры из словаря источника: по нему работает переводчик SQL
+    text: str = ""
+    schema_name: str = ""  # схема источника (для имён без схемы в тексте)
 
 
 class InactiveObject(BaseModel):
@@ -397,7 +400,7 @@ class Model(BaseModel):
         """Хеш содержимого без времени импорта: одинаковые выгрузки дают одинаковый хеш.
         Поля, добавленные для реляционных источников, в хеш не входят: хеш моделей BW не меняется."""
         exclude: dict = {"imported_at": True, "source": True, "files": True, "source_kind": True,
-                         "others": {"__all__": {"lines"}}}
+                         "others": {"__all__": {"lines", "text", "schema_name"}}}
         if not self.tables:
             exclude["tables"] = True
         if not self.currency_decimals:

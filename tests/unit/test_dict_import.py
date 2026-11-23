@@ -246,7 +246,8 @@ def test_assessment_labels(ora):
     assert by_name["SALES_ORDERS"].type == "Таблица" and by_name["SALES_LOG_EVENTS"].type == "Таблица без ключа"
     assert by_name["SALES_ORDERS/ORACLE"].type == "Входная таблица" and by_name["SALES_ORDERS/ORACLE"].level == 1
     assert by_name["SALES.PKG_LOAD"].level == 3 and by_name["SALES.PKG_LOAD"].hours == 4 + 2 * 4
-    assert by_name["SALES.V_SALES_BY_REGION"].level == 2 and by_name["SALES.V_SALES_BY_REGION"].hours == 3
+    # Представление с текстом переведено автоматически: остаётся проверка на данных (view_translated)
+    assert by_name["SALES.V_SALES_BY_REGION"].level == 1 and by_name["SALES.V_SALES_BY_REGION"].hours == 0.35
     assert "SALES_ORDERS/ORACLE" in report.flat_files
 
 

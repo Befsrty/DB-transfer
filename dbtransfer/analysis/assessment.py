@@ -119,11 +119,43 @@ class RoutineInfo:
 
 
 @dataclass
+class TranslationSummary:
+    """Итог переводчика SQL: сколько переведено автоматически и сколько ручной работы осталось."""
+
+    dialect: str
+    views: int = 0
+    views_auto: int = 0
+    views_draft: int = 0
+    routines: int = 0  # процедуры, функции, члены пакетов, макросы
+    routine_statements: int = 0
+    routine_statements_auto: int = 0
+    lines: int = 0  # строк кода у объектов с текстом
+    lines_auto: float = 0.0  # строк, переведённых без TODO (по доле операторов)
+    todos: int = 0
+    hours_manual: float = 0.0  # ручная работа по прежним нормам (переписать всё вручную)
+    hours_left: float = 0.0  # ручная работа после перевода
+    no_text: int = 0  # представления и процедуры без текста в выгрузке: переводить нечего
+
+    @property
+    def auto_share(self) -> float:
+        return self.lines_auto / self.lines if self.lines else 0.0
+
+    @property
+    def views_share(self) -> float:
+        return self.views_auto / self.views if self.views else 0.0
+
+    @property
+    def statements_share(self) -> float:
+        return self.routine_statements_auto / self.routine_statements if self.routine_statements else 0.0
+
+
+@dataclass
 class Report:
     objects: list[Assessment]
     routines: list[RoutineInfo]
     flat_files: list[str]
     unparsed: list[Assessment]
+    translation: TranslationSummary | None = None
 
     @property
     def by_type(self) -> Counter:
@@ -180,7 +212,11 @@ def assess_transformation(t: Transformation, norms: dict[str, float]) -> Assessm
     return a
 
 
-def assess(model: Model) -> Report:
+def assess(model: Model, dialect: str | None = None) -> Report:
+    """Отчёт о сложности. dialect — цель переводчика SQL (по умолчанию ADB 7.5, greenplum7)."""
+    from dbtransfer.generator.dialects import DEFAULT_DIALECT
+
+    dialect = dialect or DEFAULT_DIALECT
     norms = load_effort_norms()
     objects: list[Assessment] = []
     for iobj in sorted(model.info_objects.values(), key=lambda i: i.name):
@@ -223,7 +259,16 @@ def assess(model: Model) -> Report:
         mode = {"FULL": "полная", "DELTA": "дельта"}.get(d.mode, d.mode)
         objects.append(Assessment(type="DTP", name=d.name, level=1, reasons=[f"{mode} загрузка"],
                                   description=f"{d.source.name} → {d.target.name}"))
+    translated = _translations(model, dialect)
+    summary = TranslationSummary(dialect) if translated is not None else None
     for o in sorted(model.others, key=lambda o: (o.type.value, o.name)):
+        if summary is not None and o.type in (ObjectType.VIEW, ObjectType.DB_ROUTINE):
+            items = translated.get(o.name, [])
+            if items:
+                objects.append(_assess_translated(o, items, norms, summary))
+                continue
+            if not o.text.strip():
+                summary.no_text += 1
         known = OTHER_SAME_FAMILY if model.source_kind == SourceKind.GREENPLUM and o.type in OTHER_SAME_FAMILY \
             else OTHER_TERADATA if model.source_kind == SourceKind.TERADATA and o.type in OTHER_TERADATA else OTHER
         label, level, reason, norm = known.get(o.type, (o.type.value, 3, "прочий объект", "unparsed_object"))
@@ -239,4 +284,79 @@ def assess(model: Model) -> Report:
             where = f"{i.file}, строка {i.line}" if i.file and i.line else (i.file or "")
             unparsed.append(Assessment(type="Не разобрано", name=i.object or where, level=3,
                                        reasons=[i.message], hours=norms["unparsed_object"], description=where))
-    return Report(objects=objects, routines=routines, flat_files=flat_files, unparsed=unparsed)
+    return Report(objects=objects, routines=routines, flat_files=flat_files, unparsed=unparsed, translation=summary)
+
+
+def _manual_hours(o, norms: dict[str, float]) -> float:
+    norm = "view" if o.type == ObjectType.VIEW else "db_routine"
+    return norms[norm] + norms[f"{norm}_per_50_lines"] * math.ceil(o.lines / 50) if o.lines else norms[norm]
+
+
+def _assess_translated(o, items: list, norms: dict[str, float], s: TranslationSummary) -> Assessment:
+    """Объект с переводом: уровень и часы по результату переводчика, а не по норме «переписать вручную»."""
+    from dbtransfer.translate import AUTO, FAILED
+
+    manual = _manual_hours(o, norms)
+    lines = o.lines or o.text.count("\n") + 1
+    todos = [t for i in items for t in i.todos]
+    s.lines += lines
+    s.todos += len(todos)
+    s.hours_manual += manual
+    label = "Представление" if o.type == ObjectType.VIEW else "Процедура, функция, триггер"
+    if o.type == ObjectType.VIEW:
+        t = items[0]
+        s.views += 1
+        if t.status == AUTO:
+            s.views_auto += 1
+            s.lines_auto += lines
+            hours = norms["view_translated"] + norms["view_translated_per_50_lines"] * math.ceil(lines / 50)
+            reasons = ["переведено автоматически, в пакете 080_views.sql"] + (
+                ["правила: " + "; ".join(t.notes)] if t.notes else [])
+            level = 1
+        elif t.status == FAILED:
+            hours, level = manual, 3
+            reasons = ["не разобрано переводчиком: " + "; ".join(todos)]
+        else:
+            s.views_draft += 1
+            hours = min(manual, norms["view_translated"] + norms["translation_todo"] * len(todos))
+            level = 2
+            reasons = ["черновик в drafts_views.sql, TODO: " + "; ".join(todos)]
+    else:
+        s.routines += len(items)
+        stmts = sum(i.statements for i in items)
+        ok = sum(i.auto_statements for i in items)
+        s.routine_statements += stmts
+        s.routine_statements_auto += ok
+        share = ok / stmts if stmts else 0.0
+        if all(i.status == FAILED for i in items):
+            hours, level = manual, 3
+            reasons = ["не переведено: " + "; ".join(todos)]
+        else:
+            s.lines_auto += lines * share
+            review = norms["routine_draft_review"] + norms["routine_draft_review_per_50_lines"] * math.ceil(lines / 50)
+            hours = min(manual, review + norms["translation_todo"] * len(todos))
+            level = 2
+            what = f"черновик PL/pgSQL в drafts_routines.sql: операторов {stmts}, без TODO {ok} ({share:.0%})"
+            reasons = [what] + ([f"TODO ({len(todos)}): " + "; ".join(todos[:5]) + (" …" if len(todos) > 5 else "")]
+                                if todos else [])
+    s.hours_left += hours
+    return Assessment(type=label, name=o.name, level=level, reasons=reasons, hours=hours, description=o.info)
+
+
+def _translations(model: Model, dialect: str) -> dict[str, list] | None:
+    """Переводы объектов модели по имени объекта источника (у пакета — все его члены).
+    None — перевода для этого источника нет (SAP BW, Greenplum той же семьи)."""
+    from dbtransfer.translate import SOURCE_DIALECTS, translate_model
+
+    if model.is_bw or model.source_kind == SourceKind.GREENPLUM or model.source_kind not in SOURCE_DIALECTS:
+        return None
+    if not any(o.type in (ObjectType.VIEW, ObjectType.DB_ROUTINE) for o in model.others):
+        return None
+    result: dict[str, list] = {}
+    names = {o.name.upper(): o.name for o in model.others}
+    for t in translate_model(model, dialect):
+        name = t.name
+        if "__" in name:  # член пакета SCHEMA.PKG__PROC -> пакет SCHEMA.PKG
+            name = name.split("__", 1)[0]
+        result.setdefault(names.get(name.upper(), name), []).append(t)
+    return result
