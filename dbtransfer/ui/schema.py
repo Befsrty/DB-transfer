@@ -22,7 +22,8 @@ LAYER_LABELS = {"source": "Источник", "stg": "Вход (stg)", "dwh": "�
 LAYER_FILL = {"source": "#E8EEF7", "stg": "#EAF4EA", "dwh": "#DCEBFA", "mart": "#FDF0D5", "report": "#EFE7F7"}
 LEVEL_COLOR = {1: "#3B8E3B", 2: "#C98B00", 3: "#C0392B"}
 TYPE_LABELS = {ObjectType.DATASOURCE: "DataSource", ObjectType.ADSO: "ADSO",
-               ObjectType.COMPOSITE_PROVIDER: "CompositeProvider", ObjectType.QUERY: "BEx-запрос"}
+               ObjectType.COMPOSITE_PROVIDER: "CompositeProvider", ObjectType.QUERY: "BEx-запрос",
+               ObjectType.TABLE: "Таблица"}
 HIGHLIGHT = "#E8590C"
 
 
@@ -56,6 +57,8 @@ def layer_of(model: Model, ref: ObjectRef) -> str:
     if ref.type == ObjectType.ADSO:
         adso = model.adsos.get(ref.name)
         return naming.adso_layer(model, adso) if isinstance(adso, Adso) else "dwh"
+    if ref.type == ObjectType.TABLE:
+        return "dwh"
     return "report"
 
 

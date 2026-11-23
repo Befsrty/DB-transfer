@@ -1,0 +1,4 @@
+TABLE_SCHEMA,TABLE_NAME,VIEW_DEFINITION
+dbo,vOrderTotals,"CREATE VIEW dbo.vOrderTotals AS
+SELECT CustomerId, SUM(Total) AS Total
+FROM [dbo].[Order] GROUP BY CustomerId"

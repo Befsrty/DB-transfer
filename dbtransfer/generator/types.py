@@ -12,8 +12,8 @@ from dbtransfer.model import FieldDef, InfoObject, InfoObjectKind, Model
 
 TYPE_RULES_FILE = "type_rules.yaml"
 STORAGE_KINDS = ("heap", "ao_column")
-NUMERIC_TYPES = {"CURR", "QUAN", "DEC", "INT1", "INT2", "INT4", "INT8", "FLTP"}
-TEXT_TYPES = {"CHAR", "CUKY", "UNIT", "LANG", "STRING", "SSTRING"}
+NUMERIC_TYPES = {"CURR", "QUAN", "DEC", "NUMERIC", "INT1", "INT2", "INT4", "INT8", "FLTP"}
+TEXT_TYPES = {"CHAR", "FIXCHAR", "CUKY", "UNIT", "LANG", "STRING", "SSTRING"}
 
 
 class RulesError(Exception):
@@ -76,6 +76,10 @@ class TypeRules:
             return f"DATE '{self.date_key_placeholder}'"
         if f.datatype == "TIMS":
             return "TIME '00:00:00'"
+        if f.datatype in ("TIMESTAMP", "TIMESTAMPTZ"):
+            return f"TIMESTAMP '{self.date_key_placeholder} 00:00:00'"
+        if f.datatype == "BINARY":
+            return "''::bytea"
         if f.datatype in NUMERIC_TYPES:
             return "0"
         return "''"

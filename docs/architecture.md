@@ -23,7 +23,7 @@ CSV-выгрузки SE16 ──import──▶ Model (model.json) ──assess�
 | Модуль | Что делает | Главные функции и классы |
 |---|---|---|
 | `model/bw.py` | Модель хранилища BW на pydantic: InfoObject, ADSO, DataSource, трансформации с правилами и рутинами, DTP, прочие и неактивные объекты, проблемы импорта. Сохраняется в `model.json`, хеш содержимого — `content_hash()` | `Model`, `Adso`, `DataSource`, `Transformation`, `Rule`, `ObjectRef` |
-| `importers/` | Чтение CSV SE16 (кодировка, разделитель, заголовки), проверка колонок по `bw_tables.yaml`, сборка модели. Не знает о целевой СУБД | `import_bw_export(folder)`, `SE16_HELP` |
+| `importers/` | Чтение CSV SE16 (кодировка, разделитель, заголовки), проверка колонок по `bw_tables.yaml`, сборка модели. Словарь Oracle и MS SQL Server — из CSV или через DB-API-подключение (`oracle_dict.py`, `mssql_dict.py`, общая часть `rdbms_dict.py`, описание представлений в `oracle_dict.yaml` и `mssql_dict.yaml`). Выбор источника — `sources.py`. Не знает о целевой СУБД | `import_bw_export(folder)`, `import_oracle_dict`, `import_mssql_dict`, `import_model(source, ...)`, `export_help` |
 | `analysis/graph.py` | Граф объектов на networkx, состав переноса «от объекта вниз» | `build_graph`, `scope_from` |
 | `analysis/assessment.py` | Уровни автоматизации 1–3 с причинами, трудоёмкость по нормам `effort_norms.yaml` | `assess(model) → Report` |
 | `analysis/lineage.py` | Lineage поля вверх и вниз по правилам трансформаций | `lineage(model, obj, field, DOWN/UP) → Node`, `render` |
@@ -65,7 +65,11 @@ CSV-выгрузки SE16 ──import──▶ Model (model.json) ──assess�
 
 ## Как добавить источник
 
-Источник — то, из чего строится модель. Сейчас это CSV-выгрузки SAP BW.
+Источник — то, из чего строится модель. Сейчас это CSV-выгрузки SAP BW и словари Oracle и MS SQL Server ([rdbms-import.md](rdbms-import.md)). Вид источника записан в модели (`Model.source_kind`): по нему подписи в отчёте о сложности и комментарии в SQL говорят «Oracle: таблица …», а не «BW: ADSO …». В хеш модели вид источника не входит, поэтому хеши моделей BW не изменились.
+
+Таблицы реляционного источника по умолчанию переносятся 1:1: в модели это `DbTable` (`Model.tables`, ключ `СХЕМА.ТАБЛИЦА`) с ключом, полями, секционированием (`Partitioning`) и списком регистронезависимых колонок. Генератор строит для них `045_tables.sql` (`TableBuilder.db_table`, секции — `generator/partitions.py`, отдельно для Greenplum и PostgreSQL), загрузка пишет прямо в таблицу (`LoadTarget` вида `table`), сверка читает её же. Пустой `Model.tables` в хеш не входит, и группа `045_tables.sql` для BW не создаётся. Режим `--target adso` строит, как раньше, DataSource и ADSO.
+
+Ещё одна реляционная СУБД (PostgreSQL, DB2, Teradata) добавляется по образцу `oracle_dict.py`: запросы к словарю, описание колонок в `rules/<источник>_dict.yaml`, перевод типов в типы модели и разбор строк в `Catalog` из `rdbms_dict.py`. Построение модели, генерация и загрузка уже готовы.
 
 1. Создать модуль в `dbtransfer/importers/`, например `oracle_dict.py`, с функцией `import_<источник>(...) → Model`. Она заполняет те же классы модели: таблицы источника становятся `DataSource` или `Adso`, связи — `Transformation` с правилами, проблемы — `model.issue(...)`.
 2. Если понятий источника не хватает в модели (например, представления или хранимые процедуры), добавить класс в `model/bw.py` или использовать `OtherObject` — тогда объект попадёт в отчёт о сложности с ручной трудоёмкостью, но без генерации SQL.

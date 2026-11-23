@@ -60,6 +60,8 @@ uv run dbtransfer generate --dialect clickhouse -p demo
 10. **Число строк трансформации** берётся из итога запроса (`written_rows`), а не из отдельного запроса.
 11. **Ключ сортировки:** первичный ключ таблицы, для входящих таблиц и журналов — `(load_id, record_no)`, для служебных — номер записи. ClickHouse не проверяет уникальность ключа: дубли исключает сама активация.
 
+12. **Таблицы Oracle и MS SQL при переносе 1:1** получают DDL ClickHouse с `MergeTree` и `ORDER BY` по первичному ключу (`tuple()` без ключа). Секционирование источника в ClickHouse пока не переносится: при необходимости `PARTITION BY` дописывается вручную. `TIMESTAMP` → `DateTime64(6)`, `TIMESTAMP WITH TIME ZONE` / `datetimeoffset` → `DateTime64(6, 'UTC')`, двоичные типы → `String`.
+
 ## Что дальше
 
 1. Подключение к ClickHouse (clickhouse-connect, порт 8443 с TLS в Yandex Cloud) в `db.py` и параметры в `.env`.

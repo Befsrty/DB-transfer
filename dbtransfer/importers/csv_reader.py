@@ -19,16 +19,36 @@ DELIMITERS = {";": "точка с запятой", "\t": "табуляция", "
 EXTENSIONS = (".csv", ".txt")
 
 
-@dataclass
 class Row:
-    line: int  # номер строки в файле, заголовок — строка 1
-    values: dict[str, str]
+    """Строка выгрузки. Значения хранятся кортежем, имена колонок — общим для файла словарём «колонка -> номер»:
+    на словаре из 10 000 таблиц (сотни тысяч строк колонок) это в несколько раз меньше памяти, чем dict на строку."""
+
+    __slots__ = ("line", "_index", "_cells")
+
+    def __init__(self, line: int, values: dict[str, str] | None = None, *,
+                 index: dict[str, int] | None = None, cells: tuple[str, ...] = ()):
+        self.line = line  # номер строки в файле, заголовок — строка 1
+        if values is not None:
+            index, cells = {h: i for i, h in enumerate(values)}, tuple(values.values())
+        self._index = index or {}
+        self._cells = cells
+
+    @property
+    def values(self) -> dict[str, str]:
+        return {h: self._cells[i] for h, i in self._index.items()}
 
     def __getitem__(self, column: str) -> str:
-        return self.values.get(column, "")
+        i = self._index.get(column)
+        return "" if i is None else self._cells[i]
 
     def get(self, column: str, default: str = "") -> str:
-        return self.values.get(column, default) or default
+        return self[column] or default
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Row) and (self.line, self.values) == (other.line, other.values)
+
+    def __repr__(self) -> str:
+        return f"Row(line={self.line}, values={self.values!r})"
 
 
 @dataclass
@@ -74,12 +94,18 @@ def detect_delimiter(header: str) -> str:
     return best if counts[best] else ";"
 
 
-def read_table(folder: Path, spec: BwTable, encoding: str | None = None, delimiter: str | None = None) -> TableFile:
+# Как получить выгрузку и где поправить состав колонок: для сообщений об отсутствующих файлах и колонках
+SE16_HOW = ("через SE16", "Добавьте колонки в выгрузку SE16 (выбор полей, технические имена) "
+                          "или поправьте dbtransfer/rules/bw_tables.yaml")
+
+
+def read_table(folder: Path, spec: BwTable, encoding: str | None = None, delimiter: str | None = None,
+               how: tuple[str, str] = SE16_HOW) -> TableFile:
     result = TableFile(table=spec.name, path=find_file(folder, spec.name))
     if result.path is None:
         severity = Severity.ERROR if spec.required else Severity.WARNING
         tail = "" if spec.required else "; без неё часть сведений будет пропущена"
-        result.issue(severity, f"Нет файла {spec.name}.csv. Выгрузите таблицу {spec.name} через SE16 "
+        result.issue(severity, f"Нет файла {spec.name}.csv. Выгрузите таблицу {spec.name} {how[0]} "
                                f"({spec.purpose.lower()}){tail}")
         return result
 
@@ -100,14 +126,14 @@ def read_table(folder: Path, spec: BwTable, encoding: str | None = None, delimit
     missing = [c for c in spec.required_columns if c not in header]
     if missing:
         result.issue(Severity.ERROR,
-                     f"Нет обязательных колонок: {', '.join(missing)}. Таблица не использована. "
-                     "Добавьте колонки в выгрузку SE16 (выбор полей, технические имена) "
-                     "или поправьте dbtransfer/rules/bw_tables.yaml", line=1)
+                     f"Нет обязательных колонок: {', '.join(missing)}. Таблица не использована. {how[1]}",
+                     line=1)
         return result
     extra = [c for c in header if c not in spec.columns]
     if extra:
         result.issue(Severity.INFO, f"Колонки не используются прототипом: {', '.join(extra)}", line=1)
 
+    index = {h: i for i, h in enumerate(header)}
     for values in reader:
         line = reader.line_num
         if not any(v.strip() for v in values):
@@ -118,6 +144,6 @@ def read_table(folder: Path, spec: BwTable, encoding: str | None = None, delimit
                          "Проверьте разделитель и кавычки в этой строке", line=line)
             continue
         # SE16 дополняет значения пробелами справа до длины поля; слева значения не трогаем
-        result.rows.append(Row(line=line, values={h: v.rstrip() for h, v in zip(header, values, strict=True)}))
+        result.rows.append(Row(line, index=index, cells=tuple(v.rstrip() for v in values)))
     result.usable = True
     return result

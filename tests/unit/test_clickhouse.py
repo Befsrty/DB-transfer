@@ -154,3 +154,20 @@ def test_project_rules_override(model, tmp_path):
     a01 = tables(package.files()["050_adso.sql"])["dbt_dwh.zsd_a01_active"]
     assert "doc_number LowCardinality(String)" in a01 and "ENGINE = ReplacingMergeTree" in a01
     assert "Decimal(17,2)" in a01  # прочие типы из правил по умолчанию
+
+
+@pytest.mark.parametrize("source", ["oracle", "mssql"])
+def test_rdbms_tables_1to1(source):
+    """Таблицы Oracle и MS SQL при переносе 1:1 тоже получают DDL ClickHouse; секции не переносятся."""
+    from dbtransfer.importers import mssql_dict, oracle_dict
+
+    data = ROOT / "tests" / "data"
+    m = (oracle_dict.import_oracle_dict(data / "oracle_dict") if source == "oracle"
+         else mssql_dict.import_mssql_dict(data / "mssql_dict"))
+    files = generate(m, dialect="clickhouse").files()
+    ddl = tables(files["045_tables.sql"])
+    assert ddl and all("\nENGINE = MergeTree\n" in t for t in ddl.values())
+    assert "PARTITION" not in files["045_tables.sql"] and "timestamptz" not in files["deploy_all.sql"]
+    if source == "oracle":
+        assert "updated_at Nullable(DateTime64(6, 'UTC'))" in ddl["dbt_sales.order_lines"]
+        assert "ORDER BY order_id" in ddl["dbt_sales.orders"]

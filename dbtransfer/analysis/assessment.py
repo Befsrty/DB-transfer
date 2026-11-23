@@ -52,10 +52,17 @@ OTHER = {
     ObjectType.QUERY: ("BEx-запрос", 3, "BEx-запрос", "query"),
     ObjectType.HIERARCHY: ("Иерархия", 3, "иерархия", "hierarchy"),
     ObjectType.PROCESS_CHAIN: ("Цепочка процессов", 3, "цепочка процессов", "process_chain"),
+    ObjectType.VIEW: ("Представление", 2, "SQL представления переписывается под Greenplum вручную", "view"),
+    ObjectType.DB_ROUTINE: ("Процедура, функция, триггер", 3, "код PL/SQL или T-SQL переносится вручную",
+                            "db_routine"),
 }
+# Подписи для моделей из словаря Oracle и MS SQL Server: ADSO — целевая таблица, DataSource — входная
+TABLE_LABELS = {AdsoKind.STANDARD: "Таблица", AdsoKind.STAGING: "Таблица без ключа"}
+SOURCE_TABLE_LABEL = "Входная таблица"
 # Порядок типов в сводке (ТЗ, ФП-3.1)
 TYPE_ORDER = [*IOBJ_LABELS.values(), *ADSO_LABELS.values(), "DataSource", "Трансформация", "DTP",
               "CompositeProvider", "BEx-запрос", "Иерархия", "Цепочка процессов", "Классический DSO",
+              *TABLE_LABELS.values(), SOURCE_TABLE_LABEL, "Представление", "Процедура, функция, триггер",
               "Не разобрано"]
 
 
@@ -158,11 +165,23 @@ def assess(model: Model) -> Report:
         objects.append(Assessment(type=IOBJ_LABELS[iobj.kind], name=iobj.name, level=1,
                                   reasons=["генерируется автоматически"], description=iobj.description))
     for adso in sorted(model.adsos.values(), key=lambda a: a.name):
-        objects.append(Assessment(type=ADSO_LABELS[adso.kind], name=adso.name, level=1,
+        label = ADSO_LABELS[adso.kind] if model.is_bw else TABLE_LABELS.get(adso.kind, ADSO_LABELS[adso.kind])
+        objects.append(Assessment(type=label, name=adso.name, level=1,
                                   reasons=["генерируется автоматически"], description=adso.description))
+    for t in sorted(model.tables.values(), key=lambda t: t.key_name):
+        reasons = ["генерируется автоматически, данные загружаются напрямую"]
+        if t.partitioning is not None:
+            reasons.append(f"секционирование {t.partitioning.kind} ({len(t.partitioning.partitions)} секций)")
+        objects.append(Assessment(type=TABLE_LABELS[AdsoKind.STANDARD if t.key else AdsoKind.STAGING],
+                                  name=t.key_name, level=1, reasons=reasons, description=t.description))
     flat_files = []
     for ds in sorted(model.datasources.values(), key=lambda d: d.ref.key):
-        if ds.is_flat_file:
+        if not model.is_bw:
+            flat_files.append(ds.ref.key)
+            objects.append(Assessment(type=SOURCE_TABLE_LABEL, name=ds.ref.key, level=1,
+                                      reasons=[f"данные таблицы {model.source_label} загружаются CSV-выгрузкой"],
+                                      description=ds.description))
+        elif ds.is_flat_file:
             flat_files.append(ds.ref.key)
             objects.append(Assessment(type="DataSource", name=ds.ref.key, level=1, reasons=["плоский файл"],
                                       description=ds.description))
@@ -184,7 +203,10 @@ def assess(model: Model) -> Report:
                                   description=f"{d.source.name} → {d.target.name}"))
     for o in sorted(model.others, key=lambda o: (o.type.value, o.name)):
         label, level, reason, norm = OTHER.get(o.type, (o.type.value, 3, "прочий объект", "unparsed_object"))
-        objects.append(Assessment(type=label, name=o.name, level=level, reasons=[reason], hours=norms[norm],
+        hours = norms[norm]
+        if o.lines and f"{norm}_per_50_lines" in norms:
+            hours += norms[f"{norm}_per_50_lines"] * math.ceil(o.lines / 50)
+        objects.append(Assessment(type=label, name=o.name, level=level, reasons=[reason], hours=hours,
                                   description=o.info))
 
     unparsed = []

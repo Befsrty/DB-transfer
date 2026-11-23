@@ -16,6 +16,11 @@ dependencies = [
     "streamlit>=1.40",
 ]
 
+[project.optional-dependencies]
+# Драйверы для импорта словаря напрямую из базы; для импорта из CSV не нужны
+oracle = ["oracledb>=2.0"]
+mssql = ["pymssql>=2.3"]
+
 [project.scripts]
 dbtransfer = "dbtransfer.cli:app"
 

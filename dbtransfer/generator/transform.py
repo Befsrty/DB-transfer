@@ -36,7 +36,7 @@ ROUTINE_TITLE = {RoutineKind.START: "стартовая рутина", RoutineKi
 RULE_TITLE = {RuleKind.DIRECT: "прямое присвоение", RuleKind.CONSTANT: "константа", RuleKind.FORMULA: "формула",
               RuleKind.TIME: "преобразование времени", RuleKind.READ_MD: "чтение атрибута справочника",
               RuleKind.ROUTINE: "рутина", RuleKind.UNKNOWN: "неизвестное правило"}
-TEXT_LIKE = {"CHAR", "NUMC", "CUKY", "UNIT", "LANG", "STRING", "SSTRING"}
+TEXT_LIKE = {"CHAR", "FIXCHAR", "NUMC", "CUKY", "UNIT", "LANG", "STRING", "SSTRING"}
 
 
 @dataclass

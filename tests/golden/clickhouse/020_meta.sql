@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS dbt_meta.load_log
     rows_loaded  Nullable(Int64) COMMENT 'Число загруженных строк',
     status       String COMMENT 'loaded, activated или failed',
     loaded_by    Nullable(String) COMMENT 'Пользователь ОС',
-    loaded_at    Nullable(DateTime64(3)) COMMENT 'Время загрузки',
-    activated_at Nullable(DateTime64(3)) COMMENT 'Время активации',
+    loaded_at    Nullable(DateTime64(6)) COMMENT 'Время загрузки',
+    activated_at Nullable(DateTime64(6)) COMMENT 'Время активации',
     message      Nullable(String) COMMENT 'Итоги шагов прогона или текст ошибки'
 )
 ENGINE = MergeTree
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS dbt_meta.deploy_log
     status      Nullable(String) COMMENT 'ok или error',
     message     Nullable(String) COMMENT 'Текст ошибки',
     deployed_by Nullable(String) COMMENT 'Пользователь ОС',
-    deployed_at Nullable(DateTime64(3)) COMMENT 'Время развёртывания'
+    deployed_at Nullable(DateTime64(6)) COMMENT 'Время развёртывания'
 )
 ENGINE = MergeTree
 ORDER BY deploy_id
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS dbt_meta.reconcile_result
     value_adb   Nullable(Decimal(38,10)) COMMENT 'Значение в базе',
     diff        Nullable(Decimal(38,10)) COMMENT 'Разница',
     status      Nullable(String) COMMENT 'совпало, расхождение, нет в ADB, нет в эталоне',
-    run_at      Nullable(DateTime64(3)) COMMENT 'Время сверки'
+    run_at      Nullable(DateTime64(6)) COMMENT 'Время сверки'
 )
 ENGINE = MergeTree
 ORDER BY run_id

@@ -66,7 +66,7 @@ def test_check_and_convert(model):
     t = resolve_target(model, RULES, "ZSALES_FF", [])
     cols = {c.name: c for c in t.table.columns}
     assert [p for _, p in check_sql(cols["netval"], "v")] == ["не число", "больше 15 знаков до запятой"]
-    assert [p for _, p in check_sql(cols["calday"], "v")] == ["не дата ГГГГММДД или ДД.ММ.ГГГГ"]
+    assert [p for _, p in check_sql(cols["calday"], "v")] == ["не дата ГГГГММДД, ДД.ММ.ГГГГ или ГГГГ-ММ-ДД"]
     assert [p for _, p in check_sql(cols["s_ord_item"], "v")] == ["не только цифры (NUMC)", "длиннее 6 символов"]
     assert [p for _, p in check_sql(cols["doc_number"], "v")] == ["длиннее 10 символов"]
     assert convert_sql(cols["netval"], "v", RULES) == \
